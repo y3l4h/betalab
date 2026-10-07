@@ -1,6 +1,6 @@
 import * as db from './db.js';
 import * as timer from './timer.js';
-import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS, defaultPlans } from './defaults.js';
+import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS } from './defaults.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
 const openNotes = new Set();
@@ -38,7 +38,7 @@ const gradeIndex = id => state.settings.grades.findIndex(g => g.id === id);
 const swatch = (id, cls = '') => h('span', { class: `swatch ${cls}`, style: { background: grade(id).color } });
 const activeSession = () => state.sessions.find(s => !s.endedAt);
 const repsLabel = e => (e.sets > 1 ? `${e.sets} × ${e.reps || 'sets'}` : e.reps || '1 set');
-const setCounts = s => s.exercises.reduce((n, e) => [n[0] + e.done.filter(Boolean).length, n[1] + e.done.length], [0, 0]);
+const setCounts = s => s.exercises.map(exCounts).reduce((n, c) => [n[0] + c[0], n[1] + c[1]], [0, 0]);
 const field = (label, input) => h('label', { class: 'field' }, h('span', {}, label), input);
 
 function toast(msg) {
@@ -53,7 +53,7 @@ function toast(msg) {
 async function save(store, obj) {
   const list = state[store];
   const i = list.findIndex(x => x.id === obj.id);
-  if (i >= 0) list[i] = obj; else list.unshift(obj);
+  if (i >= 0) list[i] = obj; else if (store === 'plans') list.push(obj); else list.unshift(obj);
   await db.put(store, obj);
 }
 async function remove(store, id) {
@@ -100,14 +100,50 @@ function lightbox(src) {
   document.body.append(box);
 }
 
+// Vertical drag on a handle: drag the panel down past a threshold (or flick) to dismiss; a flick up calls onUp
+function dragGesture(handle, panel, { onDown, onUp } = {}) {
+  let startY = null, startT = 0, dy = 0;
+  handle.addEventListener('pointerdown', e => {
+    const control = e.target.closest('button, input, textarea, select, a, label');
+    if (control && control !== handle) return;
+    startY = e.clientY; startT = e.timeStamp; dy = 0;
+    handle.setPointerCapture(e.pointerId);
+    panel.style.transition = 'none';
+  });
+  handle.addEventListener('pointermove', e => {
+    if (startY == null) return;
+    dy = e.clientY - startY;
+    if (onDown) panel.style.transform = `translateY(${Math.max(0, dy)}px)`;
+  });
+  const end = e => {
+    if (startY == null) return;
+    const speed = dy / Math.max(1, e.timeStamp - startT);
+    startY = null;
+    panel.style.transition = '';
+    if (onDown && (dy > 110 || (dy > 30 && speed > 0.5))) {
+      panel.style.transform = 'translateY(100%)';
+      setTimeout(onDown, 180);
+    } else {
+      panel.style.transform = '';
+      if (onUp && (dy < -30 || (dy < -10 && speed < -0.4))) onUp();
+    }
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
 // Bottom sheets (stackable)
 function openSheet(title, body, actions = []) {
-  const overlay = h('div', { class: 'overlay' },
-    h('div', { class: 'sheet', role: 'dialog', 'aria-label': title },
-      h('div', { class: 'sheet-head' }, h('h2', {}, title), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSheet }, '✕')),
-      h('div', { class: 'sheet-body' }, body),
-      actions.filter(Boolean).length ? h('div', { class: 'sheet-actions' }, actions) : null));
+  const head = h('div', { class: 'sheet-head' },
+    h('span', { class: 'grabber', 'aria-hidden': 'true' }),
+    h('h2', {}, title), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSheet }, '✕'));
+  const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-label': title },
+    head,
+    h('div', { class: 'sheet-body' }, body),
+    actions.filter(Boolean).length ? h('div', { class: 'sheet-actions' }, actions) : null);
+  const overlay = h('div', { class: 'overlay' }, sheet);
   overlay.addEventListener('click', e => { if (e.target === overlay) closeSheet(); });
+  dragGesture(head, sheet, { onDown: closeSheet });
   document.body.append(overlay);
   document.body.classList.add('sheet-open');
 }
@@ -121,38 +157,134 @@ function render() {
   const main = document.getElementById('main');
   const y = window.scrollY;
   const same = main.dataset.tab === state.tab;
-  const views = { train: trainView, climbs: climbsView, plans: plansView, progress: progressView };
+  const views = { train: trainView, climbs: climbsView, progress: progressView, settings: settingsView };
   main.replaceChildren(views[state.tab]());
   main.dataset.tab = state.tab;
   window.scrollTo(0, same ? y : 0);
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === state.tab));
-  tickElapsed();
+  renderSession();
+  tickClocks();
 }
-function tickElapsed() {
-  document.querySelectorAll('[data-elapsed]').forEach(el => { el.textContent = fmtDuration(Date.now() - Number(el.dataset.elapsed)); });
+
+const fmtClock = ms => {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(t / 3600), mm = Math.floor((t % 3600) / 60), ss = String(t % 60).padStart(2, '0');
+  return hh ? `${hh}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`;
+};
+function tickClocks() {
+  document.querySelectorAll('[data-clock]').forEach(el => { el.textContent = fmtClock(Date.now() - Number(el.dataset.clock)); });
+}
+
+// The running session lives in its own panel: full-height when open, a mini bar above the tabs when minimised
+let sessionPanel = null;
+let showRestChips = false;
+
+function renderSession() {
+  const s = activeSession();
+  document.body.classList.toggle('session-open', !!s && state.sessionOpen);
+  document.body.classList.toggle('session-mini', !!s && !state.sessionOpen);
+  if (!s) { sessionPanel?.remove(); sessionPanel = null; return; }
+
+  if (!state.sessionOpen) {
+    sessionPanel?.remove();
+    const [done, total] = setCounts(s);
+    const bar = h('button', { class: 'session-mini-bar', 'aria-label': `Open ${s.name}`, onclick: () => openSession() },
+      h('span', { class: 'live-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'grow mini-name' }, s.name),
+      h('span', { class: 'mini-meta' }, h('span', { 'data-clock': s.startedAt }), total ? ` · ${done}/${total}` : ''),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, '⌃'));
+    dragGesture(bar, bar, { onUp: openSession });
+    sessionPanel = bar;
+    document.body.append(bar);
+    return;
+  }
+
+  // Reuse the open panel so the scroll position survives re-renders
+  let body = sessionPanel?.classList.contains('session-panel') ? sessionPanel.querySelector('.session-body') : null;
+  const scroll = body?.scrollTop ?? 0;
+  if (!body) {
+    sessionPanel?.remove();
+    body = h('div', { class: 'session-body' });
+    sessionPanel = h('div', { class: 'session-panel', role: 'dialog', 'aria-label': 'Current session' }, h('div', { class: 'session-head' }), body);
+    document.body.append(sessionPanel);
+  }
+  const head = sessionHeader(s);
+  sessionPanel.querySelector('.session-head').replaceWith(head);
+  dragGesture(head, sessionPanel, { onDown: minimiseSession });
+  body.replaceChildren(sessionView(s));
+  body.scrollTop = scroll;
+}
+
+function openSession() { state.sessionOpen = true; render(); }
+function minimiseSession() { state.sessionOpen = false; showRestChips = false; render(); }
+
+function sessionHeader(s) {
+  return h('div', { class: 'session-head' },
+    h('span', { class: 'grabber', 'aria-hidden': 'true' }),
+    h('div', { class: 'session-head-row' },
+      h('button', { class: 'btn small primary', onclick: () => finishSession(s) }, 'Finish'),
+      h('div', { class: 'session-clock' },
+        h('div', { class: 'clock', 'data-clock': s.startedAt }, fmtClock(Date.now() - s.startedAt)),
+        h('div', { class: 'clock-name' }, s.name)),
+      h('button', {
+        class: `btn small${showRestChips ? ' on' : ''}`, 'aria-label': 'Quick rest timer', 'aria-expanded': String(showRestChips),
+        onclick: () => { showRestChips = !showRestChips; render(); },
+      }, '⏱ Rest')),
+    showRestChips && h('div', { class: 'chip-row rest-chips' }, [30, 60, 90, 120, 180, 240].map(sec =>
+      h('button', { class: 'chip', onclick: () => { timer.start(sec); showRestChips = false; render(); } }, fmtTime(sec)))));
+}
+
+async function finishSession(s) {
+  flushPending();
+  s.endedAt = Date.now();
+  await save('sessions', s);
+  timer.stop();
+  state.sessionOpen = false;
+  render();
+  toast('Session saved 💪');
+}
+
+// Long-press opens the plan's menu; a normal tap starts it
+function planCard(p) {
+  let pressTimer = null, longPressed = false, startX = 0, startY = 0;
+  const cancel = () => clearTimeout(pressTimer);
+  const main = h('button', {
+    class: 'plan-main', 'aria-label': `Start ${p.name}`,
+    onclick: e => { if (longPressed) { e.preventDefault(); longPressed = false; return; } startSession(p); },
+    oncontextmenu: e => e.preventDefault(),
+    onpointerdown: e => {
+      longPressed = false; startX = e.clientX; startY = e.clientY;
+      pressTimer = setTimeout(() => { longPressed = true; navigator.vibrate?.(10); planMenu(p); }, 500);
+    },
+    onpointermove: e => { if (Math.hypot(e.clientX - startX, e.clientY - startY) > 10) cancel(); },
+    onpointerup: cancel,
+    onpointercancel: cancel,
+    onpointerleave: cancel,
+  },
+    h('div', { class: 'grow' },
+      h('div', { class: 'card-title' }, p.name),
+      p.description && h('p', { class: 'muted small' }, p.description)),
+    h('span', { class: 'play', 'aria-hidden': 'true' }, '▶'));
+  return h('div', { class: 'card plan-card' }, main,
+    h('button', { class: 'icon-btn meatball', 'aria-label': `${p.name} options`, onclick: () => planMenu(p) }, '⋯'));
 }
 
 // Train tab
 function trainView() {
-  const s = activeSession();
-  if (s) return sessionView(s);
-  const history = state.sessions.filter(x => x.endedAt).sort((a, b) => b.startedAt - a.startedAt);
   return h('div', {},
     h('header', { class: 'page-head' }, h('h1', {}, 'Train')),
     h('h3', { class: 'section-title' }, 'Start a session'),
     state.plans.length
-      ? state.plans.map(p => h('button', { class: 'card plan-card', 'aria-label': `Start ${p.name}`, onclick: () => startSession(p) },
-        h('div', { class: 'grow' },
-          h('div', { class: 'card-title' }, p.name),
-          p.description && h('p', { class: 'muted small' }, p.description)),
-        h('span', { class: 'play', 'aria-hidden': 'true' }, '▶')))
-      : h('p', { class: 'muted' }, 'No plans yet. Make one in Plans.'),
-    h('button', { class: 'btn ghost full', onclick: () => startSession(null) }, 'Start an empty session'),
+      ? state.plans.map(planCard)
+      : h('div', { class: 'card empty-plans' },
+        h('div', { class: 'card-title' }, 'No plans yet'),
+        h('p', { class: 'muted small' }, 'Tap “+ New plan” to build your first session, or start an empty one and add exercises as you go.')),
+    h('div', { class: 'btn-pair' },
+      h('button', { class: 'btn ghost', onclick: () => planSheet(null) }, '+ New plan'),
+      h('button', { class: 'btn ghost', onclick: () => startSession(null) }, 'Empty session')),
     h('h3', { class: 'section-title' }, 'Quick rest timer'),
     h('div', { class: 'chip-row' }, [60, 90, 120, 180, 240, 300].map(sec =>
-      h('button', { class: 'chip', onclick: () => timer.start(sec) }, fmtTime(sec)))),
-    h('h3', { class: 'section-title' }, 'History'),
-    history.length ? history.map(historyRow) : h('p', { class: 'muted small' }, 'Finished sessions show up here.'));
+      h('button', { class: 'chip', onclick: () => timer.start(sec) }, fmtTime(sec)))));
 }
 
 function historyRow(s) {
@@ -169,8 +301,7 @@ function historyRow(s) {
 async function startSession(plan) {
   if (activeSession()) {
     toast('Finish your current session first');
-    state.tab = 'train';
-    render();
+    openSession();
     return;
   }
   const s = {
@@ -178,7 +309,7 @@ async function startSession(plan) {
     exercises: (plan?.exercises ?? []).map(e => ({ ...e, id: uid(), done: Array(e.sets).fill(false), note: '', climbIds: [], climbDone: {} })),
   };
   await save('sessions', s);
-  state.tab = 'train';
+  state.sessionOpen = true;
   render();
 }
 
@@ -191,9 +322,6 @@ function sessionView(s) {
   }
   const climbs = state.climbs.filter(c => c.sessionId === s.id);
   return h('div', {},
-    h('header', { class: 'page-head' },
-      h('div', { class: 'grow' }, h('p', { class: 'eyebrow' }, 'In session'), h('h1', {}, s.name)),
-      h('div', { class: 'elapsed', 'data-elapsed': s.startedAt })),
     h('div', { class: 'progress' }, h('div', { style: { width: `${total ? (done / total) * 100 : 0}%` } })),
     h('p', { class: 'muted small', style: { marginTop: '6px' } }, `${done} of ${total} sets done`),
     h('button', { class: 'btn primary full', onclick: () => climbSheet(null, s.id) }, '📷 Add climb'),
@@ -212,31 +340,22 @@ function sessionView(s) {
       class: 'input', rows: 3, placeholder: 'How did it feel? Skin, energy, beta…', value: s.notes,
       oninput: e => { s.notes = e.target.value; saveLater('sessions', s); },
     }),
-    h('div', { class: 'row gap' },
-      h('button', {
-        class: 'btn danger',
-        onclick: async () => {
-          if (!confirm('Discard this session? Climbs you logged stay in your climb log.')) return;
-          timer.stop();
-          await remove('sessions', s.id);
-          render();
-        },
-      }, 'Discard'),
-      h('button', {
-        class: 'btn primary grow',
-        onclick: async () => {
-          flushPending();
-          s.endedAt = Date.now();
-          await save('sessions', s);
-          timer.stop();
-          render();
-          toast('Session saved 💪');
-        },
-      }, 'Finish session')));
+    h('button', {
+      class: 'btn danger full',
+      onclick: async () => {
+        if (!confirm('Discard this session? Climbs you logged stay in your climb log.')) return;
+        timer.stop();
+        await remove('sessions', s.id);
+        state.sessionOpen = false;
+        render();
+      },
+    }, 'Discard session'));
 }
 
 function exerciseCard(s, e) {
-  const complete = e.done.length > 0 && e.done.every(Boolean);
+  const [doneCount, totalCount] = exCounts(e);
+  const complete = totalCount > 0 && doneCount === totalCount;
+  const hasClimbs = linkedClimbs(e).length > 0;
   const showNote = openNotes.has(e.id) || e.note;
   const meta = [repsLabel(e), e.rest ? `rest ${fmtTime(e.rest)}` : null].filter(Boolean).join(' · ');
   return h('div', { class: `card ex-card${complete ? ' complete' : ''}` },
@@ -250,20 +369,14 @@ function exerciseCard(s, e) {
       class: 'tip', open: openTips.has(e.id),
       ontoggle: ev => (ev.target.open ? openTips.add(e.id) : openTips.delete(e.id)),
     }, h('summary', {}, 'How to'), h('p', {}, e.tip)),
-    h('div', { class: 'sets' },
+    !hasClimbs && h('div', { class: 'sets' },
       e.done.map((d, i) => h('button', {
         class: `set${d ? ' done' : ''}`, 'aria-label': `Set ${i + 1}${d ? ' done' : ''}`,
         onclick: () => toggleSet(s, e, i),
       }, d ? '✓' : i + 1)),
       h('button', {
         class: 'set add', 'aria-label': 'Add a set',
-        onclick: () => {
-          e.done.push(false);
-          for (const arr of Object.values(e.climbDone ?? {})) arr.push(false);
-          e.sets = e.done.length;
-          save('sessions', s);
-          render();
-        },
+        onclick: () => addRound(s, e),
       }, '+')),
     e.trackClimbs && exerciseClimbs(s, e),
     showNote && h('textarea', {
@@ -274,6 +387,20 @@ function exerciseCard(s, e) {
 
 // Climbs attached to an exercise each get a dot per round; a round is done when every climb in it is ticked
 const linkedClimbs = e => (e.climbIds ?? []).map(id => state.climbs.find(c => c.id === id)).filter(Boolean);
+
+function exCounts(e) {
+  const climbs = linkedClimbs(e);
+  if (!climbs.length) return [e.done.filter(Boolean).length, e.done.length];
+  return [climbs.reduce((n, c) => n + e.climbDone[c.id].filter(Boolean).length, 0), climbs.length * e.done.length];
+}
+
+function addRound(s, e) {
+  e.done.push(false);
+  for (const arr of Object.values(e.climbDone ?? {})) arr.push(false);
+  e.sets = e.done.length;
+  save('sessions', s);
+  render();
+}
 
 function syncRounds(e) {
   const climbs = linkedClimbs(e);
@@ -303,7 +430,9 @@ function exerciseClimbs(s, e) {
           class: `set${d ? ' done' : ''}`, 'aria-label': `Round ${i + 1}${d ? ' done' : ''}`,
           onclick: () => toggleClimbRound(s, e, c.id, i),
         }, d ? '✓' : i + 1)))))),
-    h('button', { class: 'btn small ghost', style: { marginTop: '10px' }, onclick: () => attachClimbSheet(s, e) }, '+ Add climb to this'));
+    h('div', { class: 'card-actions' },
+      h('button', { class: 'btn small ghost', onclick: () => attachClimbSheet(s, e) }, '+ Add climb to this'),
+      linkedClimbs(e).length ? h('button', { class: 'btn small ghost', onclick: () => addRound(s, e) }, '+ Round') : null));
 }
 
 function toggleSet(s, e, i) {
@@ -319,7 +448,7 @@ function toggleClimbRound(s, e, climbId, i) {
   const wasDone = e.done[i];
   e.climbDone[climbId][i] = !e.climbDone[climbId][i];
   syncRounds(e);
-  if (!wasDone && e.done[i] && e.rest > 0) timer.start(e.rest, `Rest · ${e.name} · round ${i + 1}`);
+  if (!wasDone && e.done[i] && e.rest > 0) timer.start(e.rest, `Round ${i + 1} rest · ${e.name}`);
   save('sessions', s);
   render();
 }
@@ -345,6 +474,12 @@ function attachClimbSheet(s, e) {
     ] : null));
 }
 
+function sessionsSheet() {
+  const history = state.sessions.filter(s => s.endedAt).sort((a, b) => b.startedAt - a.startedAt);
+  openSheet('Sessions', h('div', {},
+    history.length ? history.map(historyRow) : h('p', { class: 'muted' }, 'No finished sessions yet.')));
+}
+
 function sessionSheet(s) {
   const climbs = state.climbs.filter(c => c.sessionId === s.id);
   const body = h('div', {},
@@ -353,7 +488,7 @@ function sessionSheet(s) {
     s.exercises.map(e => h('div', { class: 'card' },
       h('div', { class: 'row' },
         h('div', { class: 'grow card-title' }, e.name),
-        h('span', { class: 'muted small' }, `${e.done.filter(Boolean).length}/${e.done.length}`)),
+        h('span', { class: 'muted small' }, exCounts(e).join('/'))),
       linkedClimbs(e).length ? h('p', { class: 'muted small' }, linkedClimbs(e).map(c => c.name || grade(c.grade).name).join(', ')) : null,
       e.note && h('p', { class: 'small', style: { marginTop: '4px' } }, e.note))),
     climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs'), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
@@ -368,7 +503,10 @@ function sessionSheet(s) {
       onclick: async () => {
         if (!confirm('Delete this session from your history?')) return;
         await remove('sessions', s.id);
+        const fromList = document.querySelectorAll('.overlay').length > 1;
         closeSheet();
+        // Refresh the sessions list underneath so the deleted one disappears
+        if (fromList) { closeSheet(); sessionsSheet(); }
         render();
       },
     }, 'Delete'),
@@ -513,25 +651,87 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
   ]);
 }
 
-// Plans tab
-function plansView() {
+// Settings tab
+const ACCENTS = [
+  ['Purple', '#8a30ff'], ['Lavender', '#a78bfa'], ['Pink', '#ec4899'], ['Teal', '#14b8a6'],
+  ['Blue', '#3b82f6'], ['Orange', '#f97316'], ['Lime', '#65a30d'], ['Red', '#ef4444'],
+];
+const DEFAULT_ACCENT = ACCENTS[0][1];
+
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function applyAccent() {
+  const accent = state.settings.accent || DEFAULT_ACCENT;
+  const root = document.documentElement.style;
+  root.setProperty('--accent', accent);
+  // White text on dark accents, near-black on light ones — whichever reads better
+  root.setProperty('--accent-ink', 1.05 / (luminance(accent) + 0.05) >= (luminance(accent) + 0.05) / 0.06 ? '#ffffff' : '#141414');
+}
+
+async function setAccent(color) {
+  state.settings.accent = color;
+  applyAccent();
+  await saveSettings();
+  render();
+}
+
+function settingsRow(title, sub, onclick) {
+  return h('button', { class: 'card list-row', onclick },
+    h('div', { class: 'grow' }, h('div', { class: 'card-title' }, title), sub && h('p', { class: 'muted small' }, sub)),
+    h('span', { class: 'chev' }, '›'));
+}
+
+function planMenu(p) {
+  const action = (label, fn, cls = '') => h('button', { class: `card list-row menu-item ${cls}`, onclick: () => { closeSheet(); fn(); } }, label);
+  openSheet(p.name, h('div', { class: 'stack' },
+    action('✎  Edit exercises', () => planSheet(p)),
+    action('Aa  Rename', async () => {
+      const name = prompt('Rename plan', p.name)?.trim();
+      if (!name) return;
+      await save('plans', { ...p, name });
+      render();
+    }),
+    action('⧉  Duplicate', async () => {
+      await save('plans', { ...structuredClone(p), id: uid(), name: `${p.name} (copy)`, createdAt: Date.now() });
+      render();
+    }),
+    action('🗑  Delete', async () => {
+      if (!confirm(`Delete “${p.name}”? Past sessions are kept.`)) return;
+      await remove('plans', p.id);
+      render();
+    }, 'danger-text')));
+}
+
+function settingsView() {
+  const current = (state.settings.accent || DEFAULT_ACCENT).toLowerCase();
+  const isPreset = ACCENTS.some(([, c]) => c === current);
   return h('div', {},
-    h('header', { class: 'page-head' }, h('h1', {}, 'Plans'), h('button', { class: 'btn primary', onclick: () => planSheet(null) }, '+ New plan')),
-    state.plans.map(p => h('div', { class: 'card' },
-      h('div', { class: 'card-title' }, p.name),
-      p.description && h('p', { class: 'muted small' }, p.description),
-      h('p', { class: 'muted small' }, `${p.exercises.length} exercises · ${p.exercises.reduce((n, e) => n + e.sets, 0)} sets`),
-      h('div', { class: 'card-actions' },
-        h('button', { class: 'btn small', onclick: () => planSheet(p) }, 'Edit'),
-        h('button', {
-          class: 'btn small',
-          onclick: async () => {
-            await save('plans', { ...structuredClone(p), id: uid(), name: `${p.name} (copy)`, createdAt: Date.now() });
-            render();
-          },
-        }, 'Duplicate'),
-        h('button', { class: 'btn small primary', onclick: () => startSession(p) }, 'Start')))),
-    !state.plans.length && h('div', { class: 'empty' }, 'No plans. Create one, or restore the starter plans from Progress → Settings.'));
+    h('header', { class: 'page-head' }, h('h1', {}, 'Settings')),
+    h('h3', { class: 'section-title' }, 'Accent colour'),
+    h('div', {},
+      h('div', { class: 'accent-grid' },
+        ACCENTS.map(([name, c]) => h('button', {
+          class: `accent-opt${c === current ? ' on' : ''}`, 'aria-label': name, 'aria-pressed': String(c === current),
+          onclick: () => setAccent(c),
+        }, h('span', { style: { background: c } }), name)),
+        h('label', { class: `accent-opt${isPreset ? '' : ' on'}` },
+          h('span', { class: 'custom', style: isPreset ? null : { background: current } }, isPreset ? '+' : ''),
+          'Custom',
+          h('input', { type: 'color', value: current, class: 'visually-hidden', onchange: e => setAccent(e.target.value) })))),
+    h('h3', { class: 'section-title' }, 'Climbing'),
+    settingsRow('Grade colours', state.settings.grades.map(g => g.name).join(' → '), gradesSheet),
+    h('h3', { class: 'section-title' }, 'Your data'),
+    h('div', { class: 'stack' },
+      settingsRow('Back up data', 'Save everything (incl. photos) to a file. Do this now and then!', exportData),
+      h('label', { class: 'card list-row' },
+        h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore from backup'), h('p', { class: 'muted small' }, 'Replaces everything on this device')),
+        h('span', { class: 'chev' }, '›'),
+        h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => importData(e.target.files[0]) }))),
+    h('p', { class: 'muted small', style: { marginTop: '16px', textAlign: 'center' } }, 'Your data lives only on this phone.'));
 }
 
 function planSheet(existing) {
@@ -645,8 +845,17 @@ function progressView() {
   const maxWeek = Math.max(1, ...weeks.map(w => w.sends));
 
   const tile = (label, value) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value));
+  const last = done.reduce((a, b) => (!a || b.startedAt > a.startedAt ? b : a), null);
   return h('div', {},
     h('header', { class: 'page-head' }, h('h1', {}, 'Progress')),
+    h('button', { class: 'card list-row', onclick: sessionsSheet },
+      h('div', { class: 'grow' },
+        h('div', { class: 'card-title' }, 'Sessions'),
+        h('p', { class: 'muted small' }, last
+          ? `${done.length} session${done.length === 1 ? '' : 's'} · last ${fmtDate(last.startedAt)}, ${last.name}`
+          : 'Finished sessions show up here')),
+      h('span', { class: 'chev' }, '›')),
+    h('h3', { class: 'section-title' }, 'Stats'),
     h('div', { class: 'tiles' },
       tile('Sessions this month', done.filter(s => s.startedAt >= monthStart.getTime()).length),
       tile('Total sends', sends.length),
@@ -666,29 +875,7 @@ function progressView() {
           w.sends ? h('span', { class: 'v' }, w.sends) : null,
           h('div', { class: 'bar', style: { height: `${(w.sends / maxWeek) * 100}%` } })))),
       h('div', { class: 'week-labels' }, weeks.map((w, i) =>
-        h('span', {}, i === 7 ? 'Now' : new Date(w.start).toLocaleDateString(undefined, { day: 'numeric', month: 'numeric' }))))),
-    h('h3', { class: 'section-title' }, 'Settings'),
-    h('div', { class: 'stack' },
-      h('button', { class: 'card list-row', onclick: gradesSheet },
-        h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Grade colours'), h('p', { class: 'muted small' }, grades.map(g => g.name).join(' → '))),
-        h('span', { class: 'chev' }, '›')),
-      h('button', { class: 'card list-row', onclick: exportData },
-        h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Back up data'), h('p', { class: 'muted small' }, 'Save everything (incl. photos) to a file. Do this now and then!')),
-        h('span', { class: 'chev' }, '›')),
-      h('label', { class: 'card list-row' },
-        h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore from backup'), h('p', { class: 'muted small' }, 'Replaces everything on this device')),
-        h('span', { class: 'chev' }, '›'),
-        h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => importData(e.target.files[0]) })),
-      h('button', {
-        class: 'card list-row',
-        onclick: async () => {
-          if (!confirm('Add the 3 starter plans back? Your own plans are kept.')) return;
-          await seedPlans();
-          toast('Starter plans added');
-          render();
-        },
-      }, h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore starter plans')), h('span', { class: 'chev' }, '›'))),
-    h('p', { class: 'muted small', style: { marginTop: '16px', textAlign: 'center' } }, 'Your data lives only on this phone.'));
+        h('span', {}, i === 7 ? 'Now' : new Date(w.start).toLocaleDateString(undefined, { day: 'numeric', month: 'numeric' }))))));
 }
 
 function gradesSheet() {
@@ -770,14 +957,6 @@ async function importData(file) {
   render();
 }
 
-async function seedPlans() {
-  const now = Date.now();
-  for (const [i, p] of defaultPlans().entries()) {
-    await db.put('plans', { ...p, id: uid(), createdAt: now + i, exercises: p.exercises.map(e => ({ ...e })) });
-  }
-  await loadAll();
-}
-
 async function loadAll() {
   const [plans, sessions, climbs, settings] = await Promise.all([
     db.getAll('plans'), db.getAll('sessions'), db.getAll('climbs'), db.get('meta', 'settings'),
@@ -786,13 +965,12 @@ async function loadAll() {
   state.sessions = sessions;
   state.climbs = climbs;
   state.settings = settings ?? { id: 'settings', grades: structuredClone(DEFAULT_GRADES) };
+  applyAccent();
 }
 
 async function init() {
   await loadAll();
-  if (!(await db.get('meta', 'seeded'))) {
-    await seedPlans();
-    await db.put('meta', { id: 'seeded', at: Date.now() });
+  if (!(await db.get('meta', 'settings'))) {
     await saveSettings();
   } else if (!(await db.get('meta', 'trackClimbs'))) {
     // Plans seeded before per-climb tracking existed: switch it on for the climbing exercises
@@ -802,13 +980,14 @@ async function init() {
     }
   }
   await db.put('meta', { id: 'trackClimbs', at: Date.now() });
+  state.sessionOpen = !!activeSession();
   navigator.storage?.persist?.();
   document.querySelectorAll('.tabbar button').forEach(b => {
     b.onclick = () => { state.tab = b.dataset.tab; render(); };
   });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPending(); });
   timer.init();
-  setInterval(tickElapsed, 15000);
+  setInterval(tickClocks, 1000);
   render();
   if ('serviceWorker' in navigator && location.hostname !== 'localhost') navigator.serviceWorker.register('sw.js');
 }

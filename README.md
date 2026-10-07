@@ -1,11 +1,11 @@
-# Beta Lab – bouldering log
+# BetaLab – bouldering log
 
 A free, private bouldering tracker that runs as a home-screen web app on iPhone.
 
-- **Train**: start a session from a plan, tick off sets, an automatic rest timer, notes per exercise and per session
+- **Train**: your plans (tap to start, long-press or ⋯ to edit), a session pop-up you can swipe down to minimise, tick off sets and individual climbs per round, rest timer, notes
 - **Climbs**: log climbs with photos, gym colour, project / sent / flash, attempts and beta notes
-- **Plans**: three starter plans (Capacity circuit, Project + strength, Fun session), fully editable
-- **Progress**: sends by colour, sends per week, hardest send, open projects, backup and restore
+- **Settings**: accent colour, grade colours, backup and restore
+- **Progress**: session history, sends by colour, sends per week, hardest send, open projects
 
 All data stays on the phone (IndexedDB). There are no accounts and no server.
 
