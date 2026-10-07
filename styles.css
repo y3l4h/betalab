@@ -154,6 +154,24 @@ textarea.input { resize: vertical; min-height: 80px; }
 .tip summary::-webkit-details-marker { display: none; }
 .tip p { margin-top: 4px; }
 .ex-note { margin-top: 10px; min-height: 60px; }
+.ex-climbs { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.ex-climb { display: flex; gap: 10px; align-items: flex-start; }
+.ex-climb + .ex-climb { margin-top: 12px; }
+.ex-climb-thumb { width: 48px; height: 60px; flex: none; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--surface-2); }
+.ex-climb-thumb img, .ex-climb-thumb span { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ex-climb-thumb span { opacity: .4; }
+.ex-climb-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
+.sets.sm { margin-top: 6px; gap: 6px; }
+.sets.sm .set { width: 36px; height: 36px; font-size: 14px; }
+.icon-btn.sm { width: 30px; height: 30px; font-size: 14px; }
+.check-row { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px; cursor: pointer; }
+.check-row input { width: 22px; height: 22px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.plan-card { width: 100%; text-align: left; }
+.plan-card:active { transform: scale(.99); }
+.plan-card .play {
+  width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent); color: var(--accent-ink); font-size: 15px; padding-left: 3px;
+}
 
 /* Climbs */
 .climb-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }

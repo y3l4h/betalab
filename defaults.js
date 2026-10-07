@@ -11,7 +11,10 @@ export const DEFAULT_GRADES = [
 
 export const SECTIONS = ['Warm-up', 'Main', 'Strength', 'Antagonist', 'Cool-down'];
 
-const ex = (section, name, sets, reps, rest, tip = '') => ({ section, name, sets, reps, rest, tip });
+export const CLIMB_EXERCISES = ['Easy climbs', 'Circuit: 4 problems', 'Progressive climbs', 'Project attempts', 'Flash attempts', 'Mobility + easy climbs'];
+
+const ex = (section, name, sets, reps, rest, tip = '') =>
+  ({ section, name, sets, reps, rest, tip, trackClimbs: CLIMB_EXERCISES.includes(name) });
 
 const pulse = ex('Warm-up', 'Pulse raiser', 1, '5 min skip, row or jog', 0);
 const mobility = ex('Warm-up', 'Mobility', 1, 'Shoulders, wrists, hips', 0,

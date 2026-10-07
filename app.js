@@ -1,6 +1,6 @@
 import * as db from './db.js';
 import * as timer from './timer.js';
-import { DEFAULT_GRADES, SECTIONS, defaultPlans } from './defaults.js';
+import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS, defaultPlans } from './defaults.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
 const openNotes = new Set();
@@ -141,11 +141,11 @@ function trainView() {
     h('header', { class: 'page-head' }, h('h1', {}, 'Train')),
     h('h3', { class: 'section-title' }, 'Start a session'),
     state.plans.length
-      ? state.plans.map(p => h('div', { class: 'card plan-card' },
+      ? state.plans.map(p => h('button', { class: 'card plan-card', 'aria-label': `Start ${p.name}`, onclick: () => startSession(p) },
         h('div', { class: 'grow' },
           h('div', { class: 'card-title' }, p.name),
           p.description && h('p', { class: 'muted small' }, p.description)),
-        h('button', { class: 'btn primary', onclick: () => startSession(p) }, 'Start')))
+        h('span', { class: 'play', 'aria-hidden': 'true' }, '▶')))
       : h('p', { class: 'muted' }, 'No plans yet. Make one in Plans.'),
     h('button', { class: 'btn ghost full', onclick: () => startSession(null) }, 'Start an empty session'),
     h('h3', { class: 'section-title' }, 'Quick rest timer'),
@@ -175,7 +175,7 @@ async function startSession(plan) {
   }
   const s = {
     id: uid(), planId: plan?.id ?? null, name: plan?.name ?? 'Session', startedAt: Date.now(), endedAt: null, notes: '',
-    exercises: (plan?.exercises ?? []).map(e => ({ ...e, id: uid(), done: Array(e.sets).fill(false), note: '' })),
+    exercises: (plan?.exercises ?? []).map(e => ({ ...e, id: uid(), done: Array(e.sets).fill(false), note: '', climbIds: [], climbDone: {} })),
   };
   await save('sessions', s);
   state.tab = 'train';
@@ -196,18 +196,17 @@ function sessionView(s) {
       h('div', { class: 'elapsed', 'data-elapsed': s.startedAt })),
     h('div', { class: 'progress' }, h('div', { style: { width: `${total ? (done / total) * 100 : 0}%` } })),
     h('p', { class: 'muted small', style: { marginTop: '6px' } }, `${done} of ${total} sets done`),
+    h('button', { class: 'btn primary full', onclick: () => climbSheet(null, s.id) }, '📷 Add climb'),
     [...sections].map(([name, list]) => [h('h3', { class: 'section-title' }, name), list.map(e => exerciseCard(s, e))]),
     h('button', {
       class: 'btn ghost full',
       onclick: () => exerciseSheet(null, ex => {
-        s.exercises.push({ ...ex, id: uid(), done: Array(ex.sets).fill(false), note: '' });
+        s.exercises.push({ ...ex, id: uid(), done: Array(ex.sets).fill(false), note: '', climbIds: [], climbDone: {} });
         save('sessions', s);
         render();
       }),
     }, '+ Add exercise'),
-    h('h3', { class: 'section-title' }, 'Climbs this session'),
-    climbs.length ? h('div', { class: 'climb-grid' }, climbs.map(climbTile)) : null,
-    h('button', { class: 'btn full', onclick: () => climbSheet(null, s.id) }, '📷 Log a climb'),
+    climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs this session'), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
     h('h3', { class: 'section-title' }, 'Session notes'),
     h('textarea', {
       class: 'input', rows: 3, placeholder: 'How did it feel? Skin, energy, beta…', value: s.notes,
@@ -258,19 +257,92 @@ function exerciseCard(s, e) {
       }, d ? '✓' : i + 1)),
       h('button', {
         class: 'set add', 'aria-label': 'Add a set',
-        onclick: () => { e.done.push(false); e.sets = e.done.length; save('sessions', s); render(); },
+        onclick: () => {
+          e.done.push(false);
+          for (const arr of Object.values(e.climbDone ?? {})) arr.push(false);
+          e.sets = e.done.length;
+          save('sessions', s);
+          render();
+        },
       }, '+')),
+    e.trackClimbs && exerciseClimbs(s, e),
     showNote && h('textarea', {
       class: 'input ex-note', rows: 2, placeholder: 'Notes: weight used, how it felt…', value: e.note || '',
       oninput: ev => { e.note = ev.target.value; saveLater('sessions', s); },
     }));
 }
 
+// Climbs attached to an exercise each get a dot per round; a round is done when every climb in it is ticked
+const linkedClimbs = e => (e.climbIds ?? []).map(id => state.climbs.find(c => c.id === id)).filter(Boolean);
+
+function syncRounds(e) {
+  const climbs = linkedClimbs(e);
+  if (climbs.length) e.done = e.done.map((_, i) => climbs.every(c => e.climbDone[c.id]?.[i]));
+}
+
+function exerciseClimbs(s, e) {
+  return h('div', { class: 'ex-climbs' },
+    linkedClimbs(e).map(c => h('div', { class: 'ex-climb' },
+      h('button', { class: 'ex-climb-thumb', 'aria-label': `Edit ${c.name || grade(c.grade).name}`, onclick: () => climbSheet(c) },
+        c.photoIds?.[0] ? photoImg(c.photoIds[0]) : h('span', { style: { background: grade(c.grade).color } })),
+      h('div', { class: 'grow' },
+        h('div', { class: 'row tight' },
+          swatch(c.grade),
+          h('strong', { class: 'grow ex-climb-name' }, c.name || grade(c.grade).name),
+          h('button', {
+            class: 'icon-btn sm', 'aria-label': 'Remove from exercise',
+            onclick: () => {
+              e.climbIds = e.climbIds.filter(id => id !== c.id);
+              delete e.climbDone[c.id];
+              syncRounds(e);
+              save('sessions', s);
+              render();
+            },
+          }, '✕')),
+        h('div', { class: 'sets sm' }, (e.climbDone[c.id] ?? []).map((d, i) => h('button', {
+          class: `set${d ? ' done' : ''}`, 'aria-label': `Round ${i + 1}${d ? ' done' : ''}`,
+          onclick: () => toggleClimbRound(s, e, c.id, i),
+        }, d ? '✓' : i + 1)))))),
+    h('button', { class: 'btn small ghost', style: { marginTop: '10px' }, onclick: () => attachClimbSheet(s, e) }, '+ Add climb to this'));
+}
+
 function toggleSet(s, e, i) {
-  e.done[i] = !e.done[i];
-  if (e.done[i] && e.rest > 0) timer.start(e.rest, `Rest · ${e.name}`);
+  const value = !e.done[i];
+  for (const c of linkedClimbs(e)) e.climbDone[c.id][i] = value;
+  e.done[i] = value;
+  if (value && e.rest > 0) timer.start(e.rest, `Rest · ${e.name}`);
   save('sessions', s);
   render();
+}
+
+function toggleClimbRound(s, e, climbId, i) {
+  const wasDone = e.done[i];
+  e.climbDone[climbId][i] = !e.climbDone[climbId][i];
+  syncRounds(e);
+  if (!wasDone && e.done[i] && e.rest > 0) timer.start(e.rest, `Rest · ${e.name} · round ${i + 1}`);
+  save('sessions', s);
+  render();
+}
+
+function attachClimbSheet(s, e) {
+  const attach = c => {
+    e.climbIds ??= [];
+    e.climbDone ??= {};
+    if (!e.climbIds.includes(c.id)) {
+      e.climbIds.push(c.id);
+      e.climbDone[c.id] = Array(e.done.length).fill(false);
+    }
+    syncRounds(e);
+    save('sessions', s);
+    render();
+  };
+  const recent = state.climbs.filter(c => !e.climbIds?.includes(c.id)).sort((a, b) => b.date - a.date).slice(0, 24);
+  openSheet(`Add climb to ${e.name}`, h('div', {},
+    h('button', { class: 'btn primary full', style: { marginTop: 0 }, onclick: () => { closeSheet(); climbSheet(null, s.id, attach); } }, '📷 New climb'),
+    recent.length ? [
+      h('h3', { class: 'section-title' }, 'Or pick one you’ve logged'),
+      h('div', { class: 'climb-grid' }, recent.map(c => climbTile(c, () => { closeSheet(); attach(c); }))),
+    ] : null));
 }
 
 function sessionSheet(s) {
@@ -282,8 +354,9 @@ function sessionSheet(s) {
       h('div', { class: 'row' },
         h('div', { class: 'grow card-title' }, e.name),
         h('span', { class: 'muted small' }, `${e.done.filter(Boolean).length}/${e.done.length}`)),
+      linkedClimbs(e).length ? h('p', { class: 'muted small' }, linkedClimbs(e).map(c => c.name || grade(c.grade).name).join(', ')) : null,
       e.note && h('p', { class: 'small', style: { marginTop: '4px' } }, e.note))),
-    climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs'), h('div', { class: 'climb-grid' }, climbs.map(climbTile))] : null,
+    climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs'), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
     h('h3', { class: 'section-title' }, 'Notes'),
     h('textarea', {
       class: 'input', rows: 3, value: s.notes, placeholder: 'Session notes',
@@ -311,7 +384,7 @@ function climbsView() {
     .filter(c => (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!g || c.grade === g))
     .sort((a, b) => b.date - a.date);
   return h('div', {},
-    h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'), h('button', { class: 'btn primary', onclick: () => climbSheet(null) }, '+ Log climb')),
+    h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'), h('button', { class: 'btn primary', onclick: () => climbSheet(null) }, '+ Add climb')),
     h('div', { class: 'seg' }, [['all', 'All'], ['project', 'Projects'], ['sent', 'Sent']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.climbFilter = k; render(); } }, label))),
     h('div', { class: 'chip-row' }, state.settings.grades.map(gr =>
@@ -320,13 +393,13 @@ function climbsView() {
         onclick: () => { state.gradeFilter = g === gr.id ? null : gr.id; render(); },
       }, swatch(gr.id), gr.name))),
     list.length
-      ? h('div', { class: 'climb-grid', style: { marginTop: '8px' } }, list.map(climbTile))
-      : h('div', { class: 'empty' }, state.climbs.length ? 'Nothing matches that filter.' : 'No climbs yet. Tap “Log climb” and snap a photo of your first one.'));
+      ? h('div', { class: 'climb-grid', style: { marginTop: '8px' } }, list.map(c => climbTile(c)))
+      : h('div', { class: 'empty' }, state.climbs.length ? 'Nothing matches that filter.' : 'No climbs yet. Tap “Add climb” and snap a photo of your first one.'));
 }
 
-function climbTile(c) {
+function climbTile(c, onClick = () => climbSheet(c)) {
   const meta = [fmtDate(c.date), c.status !== 'flash' && c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'}` : null];
-  return h('button', { class: 'climb-tile', onclick: () => climbSheet(c) },
+  return h('button', { class: 'climb-tile', onclick: onClick },
     c.photoIds?.[0] ? photoImg(c.photoIds[0], 'tile-img') : h('div', { class: 'tile-img placeholder', style: { background: grade(c.grade).color } }),
     h('div', { class: 'tile-meta' },
       h('div', { class: 'row tight' }, swatch(c.grade), h('strong', {}, c.name || grade(c.grade).name)),
@@ -334,7 +407,7 @@ function climbTile(c) {
       h('span', { class: 'muted small' }, meta.filter(Boolean).join(' · '))));
 }
 
-function climbSheet(existing, sessionId = null) {
+function climbSheet(existing, sessionId = null, onSaved = null) {
   const lastGrade = [...state.climbs].sort((a, b) => b.date - a.date)[0]?.grade;
   const c = existing ? structuredClone(existing) : {
     id: uid(), date: Date.now(), grade: lastGrade ?? state.settings.grades[0]?.id, name: '', status: 'project',
@@ -411,7 +484,7 @@ function climbSheet(existing, sessionId = null) {
   }
   draw();
 
-  openSheet(existing ? 'Edit climb' : 'Log a climb', body, [
+  openSheet(existing ? 'Edit climb' : 'Add climb', body, [
     existing && h('button', {
       class: 'btn danger',
       onclick: async () => {
@@ -431,6 +504,7 @@ function climbSheet(existing, sessionId = null) {
         }
         for (const id of removedPhotos) { await db.del('photos', id); photoUrls.delete(id); }
         await save('climbs', c);
+        onSaved?.(c);
         closeSheet();
         render();
         if (!existing) toast(c.status === 'project' ? 'Project saved' : `${STATUS[c.status]}! Nice 🎉`);
@@ -522,7 +596,10 @@ function exerciseSheet(existing, onSave) {
       field('Rest between sets', h('select', { class: 'input', onchange: e => { ex.rest = Number(e.target.value); } },
         rests.map(r => h('option', { value: r, selected: r === ex.rest }, r ? fmtTime(r) : 'None'))))),
     field('Reps / detail', h('input', { class: 'input', value: ex.reps, placeholder: '8 reps, 10 s hang, 4 problems…', oninput: e => { ex.reps = e.target.value; } })),
-    field('How-to / tips', h('textarea', { class: 'input', rows: 3, value: ex.tip, placeholder: 'Cues, which wall, weight…', oninput: e => { ex.tip = e.target.value; } })));
+    field('How-to / tips', h('textarea', { class: 'input', rows: 3, value: ex.tip, placeholder: 'Cues, which wall, weight…', oninput: e => { ex.tip = e.target.value; } })),
+    h('label', { class: 'check-row' },
+      h('input', { type: 'checkbox', checked: !!ex.trackClimbs, onchange: e => { ex.trackClimbs = e.target.checked; } }),
+      h('span', {}, h('strong', {}, 'Track individual climbs'), h('br'), h('span', { class: 'muted small' }, 'Add the problems you’re doing and tick each one per round'))));
 
   openSheet(existing ? 'Edit exercise' : 'Add exercise', body, [
     h('button', {
@@ -717,7 +794,14 @@ async function init() {
     await seedPlans();
     await db.put('meta', { id: 'seeded', at: Date.now() });
     await saveSettings();
+  } else if (!(await db.get('meta', 'trackClimbs'))) {
+    // Plans seeded before per-climb tracking existed: switch it on for the climbing exercises
+    for (const item of [...state.plans, ...state.sessions.filter(s => !s.endedAt)]) {
+      for (const e of item.exercises) if (e.trackClimbs === undefined && CLIMB_EXERCISES.includes(e.name)) e.trackClimbs = true;
+      await db.put(item.endedAt === undefined ? 'plans' : 'sessions', item);
+    }
   }
+  await db.put('meta', { id: 'trackClimbs', at: Date.now() });
   navigator.storage?.persist?.();
   document.querySelectorAll('.tabbar button').forEach(b => {
     b.onclick = () => { state.tab = b.dataset.tab; render(); };

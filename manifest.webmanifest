@@ -1,6 +1,6 @@
 {
-  "name": "Beta Lab – Bouldering Log",
-  "short_name": "Beta Lab",
+  "name": "BetaLab – Bouldering Log",
+  "short_name": "BetaLab",
   "description": "Bouldering log: workout plans, climb photos, rest timer.",
   "start_url": "./",
   "scope": "./",
