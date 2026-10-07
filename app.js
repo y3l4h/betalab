@@ -1,6 +1,7 @@
 import * as db from './db.js';
 import * as timer from './timer.js';
 import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS } from './defaults.js';
+import { TRAINING_TYPES, icon } from './icons.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
 const openNotes = new Set();
@@ -95,8 +96,47 @@ async function compressImage(file, max = 1600, quality = 0.82) {
     URL.revokeObjectURL(url);
   }
 }
+// Open layers (sheets, session panel, photo) keep one extra history entry alive so Android's back gesture
+// closes the top layer instead of leaving the app
+const layers = [];
+let layerSeq = 0;
+let armed = false;
+let ignorePop = false;
+
+function arm() {
+  if (armed) return;
+  history.pushState({ betalab: true }, '');
+  armed = true;
+}
+function pushLayer(close) {
+  const id = ++layerSeq;
+  layers.push({ id, close });
+  arm();
+  return id;
+}
+// The app closed a layer itself; once nothing is open (and nothing reopened straight away), drop the extra entry
+function dropLayer(id) {
+  const i = layers.findIndex(l => l.id === id);
+  if (i < 0) return;
+  layers.splice(i, 1);
+  if (!layers.length) setTimeout(() => {
+    if (layers.length || !armed) return;
+    armed = false;
+    ignorePop = true;
+    history.back();
+  }, 0);
+}
+window.addEventListener('popstate', () => {
+  if (ignorePop) { ignorePop = false; return; }
+  armed = false;
+  layers.pop()?.close();
+  if (layers.length) arm();
+});
+
 function lightbox(src) {
-  const box = h('div', { class: 'lightbox', onclick: () => box.remove() }, h('img', { src, alt: '' }));
+  const box = h('div', { class: 'lightbox' }, h('img', { src, alt: '' }));
+  const id = pushLayer(() => box.remove());
+  box.addEventListener('click', () => { box.remove(); dropLayer(id); });
   document.body.append(box);
 }
 
@@ -132,8 +172,8 @@ function dragGesture(handle, panel, { onDown, onUp } = {}) {
   handle.addEventListener('pointercancel', end);
 }
 
-// Bottom sheets (stackable)
-function openSheet(title, body, actions = []) {
+// Bottom sheets (stackable). onClose runs however the sheet goes away: button, swipe, tap outside or back
+function openSheet(title, body, actions = [], { onClose } = {}) {
   const head = h('div', { class: 'sheet-head' },
     h('span', { class: 'grabber', 'aria-hidden': 'true' }),
     h('h2', {}, title), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSheet }, '✕'));
@@ -142,15 +182,24 @@ function openSheet(title, body, actions = []) {
     h('div', { class: 'sheet-body' }, body),
     actions.filter(Boolean).length ? h('div', { class: 'sheet-actions' }, actions) : null);
   const overlay = h('div', { class: 'overlay' }, sheet);
+  overlay._onClose = onClose;
+  overlay.dataset.layer = pushLayer(() => removeOverlay(overlay));
   overlay.addEventListener('click', e => { if (e.target === overlay) closeSheet(); });
   dragGesture(head, sheet, { onDown: closeSheet });
   document.body.append(overlay);
   document.body.classList.add('sheet-open');
 }
+function removeOverlay(overlay) {
+  overlay.remove();
+  if (!document.querySelector('.overlay')) document.body.classList.remove('sheet-open');
+  overlay._onClose?.();
+}
 function closeSheet() {
   const all = document.querySelectorAll('.overlay');
-  all[all.length - 1]?.remove();
-  if (all.length <= 1) document.body.classList.remove('sheet-open');
+  const top = all[all.length - 1];
+  if (!top) return;
+  dropLayer(Number(top.dataset.layer));
+  removeOverlay(top);
 }
 
 function render() {
@@ -163,6 +212,38 @@ function render() {
   window.scrollTo(0, same ? y : 0);
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === state.tab));
   renderSession();
+  renderBars();
+  tickClocks();
+}
+
+// Minimised things (running session, plan being edited) stack as bars above the tabs
+function renderBars() {
+  let box = document.getElementById('mini-bars');
+  if (!box) { box = h('div', { id: 'mini-bars', class: 'mini-bars' }); document.body.append(box); }
+  const bars = [];
+  const s = activeSession();
+  if (s && !state.sessionOpen) {
+    const [done, total] = setCounts(s);
+    const bar = h('button', { class: 'mini-bar', 'aria-label': `Open ${s.name}`, onclick: openSession },
+      h('span', { class: 'live-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'grow mini-name' }, s.name),
+      h('span', { class: 'mini-meta' }, h('span', { 'data-clock': s.startedAt }), total ? ` · ${done}/${total}` : ''),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, '⌃'));
+    dragGesture(bar, bar, { onUp: openSession });
+    bars.push(bar);
+  }
+  const d = state.planDraft;
+  if (d && !d.open) {
+    const bar = h('button', { class: 'mini-bar draft', 'aria-label': `Continue editing ${d.plan.name || 'new plan'}`, onclick: resumeDraft },
+      icon('edit'),
+      h('span', { class: 'grow mini-name' }, `Editing ${d.plan.name || 'new plan'}`),
+      h('span', { class: 'mini-meta' }, 'unsaved'),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, '⌃'));
+    dragGesture(bar, bar, { onUp: resumeDraft });
+    bars.push(bar);
+  }
+  box.replaceChildren(...bars);
+  document.body.style.setProperty('--bars', bars.length);
   tickClocks();
 }
 
@@ -177,36 +258,29 @@ function tickClocks() {
 
 // The running session lives in its own panel: full-height when open, a mini bar above the tabs when minimised
 let sessionPanel = null;
+let sessionLayer = null;
 let showRestChips = false;
 
 function renderSession() {
   const s = activeSession();
-  document.body.classList.toggle('session-open', !!s && state.sessionOpen);
-  document.body.classList.toggle('session-mini', !!s && !state.sessionOpen);
-  if (!s) { sessionPanel?.remove(); sessionPanel = null; return; }
-
-  if (!state.sessionOpen) {
+  const open = !!s && state.sessionOpen;
+  document.body.classList.toggle('session-open', open);
+  if (!open) {
     sessionPanel?.remove();
-    const [done, total] = setCounts(s);
-    const bar = h('button', { class: 'session-mini-bar', 'aria-label': `Open ${s.name}`, onclick: () => openSession() },
-      h('span', { class: 'live-dot', 'aria-hidden': 'true' }),
-      h('span', { class: 'grow mini-name' }, s.name),
-      h('span', { class: 'mini-meta' }, h('span', { 'data-clock': s.startedAt }), total ? ` · ${done}/${total}` : ''),
-      h('span', { class: 'chev', 'aria-hidden': 'true' }, '⌃'));
-    dragGesture(bar, bar, { onUp: openSession });
-    sessionPanel = bar;
-    document.body.append(bar);
+    sessionPanel = null;
+    if (sessionLayer) { dropLayer(sessionLayer); sessionLayer = null; }
     return;
   }
 
   // Reuse the open panel so the scroll position survives re-renders
-  let body = sessionPanel?.classList.contains('session-panel') ? sessionPanel.querySelector('.session-body') : null;
+  let body = sessionPanel?.querySelector('.session-body');
   const scroll = body?.scrollTop ?? 0;
   if (!body) {
-    sessionPanel?.remove();
     body = h('div', { class: 'session-body' });
     sessionPanel = h('div', { class: 'session-panel', role: 'dialog', 'aria-label': 'Current session' }, h('div', { class: 'session-head' }), body);
     document.body.append(sessionPanel);
+    // Back gesture minimises the session (the layer is already gone from the stack when this runs)
+    sessionLayer = pushLayer(() => { sessionLayer = null; minimiseSession(); });
   }
   const head = sessionHeader(s);
   sessionPanel.querySelector('.session-head').replaceWith(head);
@@ -250,7 +324,7 @@ function planCard(p) {
   const cancel = () => clearTimeout(pressTimer);
   const main = h('button', {
     class: 'plan-main', 'aria-label': `Start ${p.name}`,
-    onclick: e => { if (longPressed) { e.preventDefault(); longPressed = false; return; } startSession(p); },
+    onclick: e => { if (longPressed) { e.preventDefault(); longPressed = false; return; } confirmStart(p); },
     oncontextmenu: e => e.preventDefault(),
     onpointerdown: e => {
       longPressed = false; startX = e.clientX; startY = e.clientY;
@@ -261,16 +335,50 @@ function planCard(p) {
     onpointercancel: cancel,
     onpointerleave: cancel,
   },
+    icon(p.type || 'climb', 'type-badge'),
     h('div', { class: 'grow' },
       h('div', { class: 'card-title' }, p.name),
-      p.description && h('p', { class: 'muted small' }, p.description)),
-    h('span', { class: 'play', 'aria-hidden': 'true' }, '▶'));
+      trainingType(p.type) && h('p', { class: 'type-label' }, trainingType(p.type).name),
+      p.description && h('p', { class: 'muted small' }, p.description)));
   return h('div', { class: 'card plan-card' }, main,
     h('button', { class: 'icon-btn meatball', 'aria-label': `${p.name} options`, onclick: () => planMenu(p) }, '⋯'));
 }
 
+const trainingType = id => TRAINING_TYPES.find(t => t.id === id);
+
+// How-to text clamped to ~2 lines; tap to show it all (only offers "more" when it actually overflows)
+function tipText(text, key) {
+  const p = h('p', {
+    class: `tip-text${openTips.has(key) ? ' open' : ''}`,
+    onclick: e => {
+      const overflowing = p.scrollHeight > p.clientHeight + 1;
+      if (!overflowing && !p.classList.contains('open')) return;
+      e.stopPropagation();
+      p.classList.toggle('open');
+      openTips.has(key) ? openTips.delete(key) : openTips.add(key);
+    },
+  }, text);
+  // Fade the last line only when the text is actually cut off
+  new ResizeObserver(() => p.classList.toggle('clamped', p.scrollHeight > p.clientHeight + 1)).observe(p);
+  return p;
+}
+
+function confirmStart(p) {
+  if (activeSession()) { startSession(p); return; }
+  const sets = p.exercises.reduce((n, e) => n + e.sets, 0);
+  openSheet('Start session?', h('div', { class: 'confirm-start' },
+    icon(p.type || 'climb', 'type-badge lg'),
+    h('div', {},
+      h('div', { class: 'card-title' }, p.name),
+      h('p', { class: 'muted small' }, [trainingType(p.type)?.name, `${p.exercises.length} exercises`, `${sets} sets`].filter(Boolean).join(' · ')))), [
+    h('button', { class: 'btn', onclick: closeSheet }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: () => { closeSheet(); startSession(p); } }, 'Start'),
+  ]);
+}
+
 // Train tab
 function trainView() {
+  const history = state.sessions.filter(s => s.endedAt).sort((a, b) => b.startedAt - a.startedAt);
   return h('div', {},
     h('header', { class: 'page-head' }, h('h1', {}, 'Train')),
     h('h3', { class: 'section-title' }, 'Start a session'),
@@ -284,7 +392,11 @@ function trainView() {
       h('button', { class: 'btn ghost', onclick: () => startSession(null) }, 'Empty session')),
     h('h3', { class: 'section-title' }, 'Quick rest timer'),
     h('div', { class: 'chip-row' }, [60, 90, 120, 180, 240, 300].map(sec =>
-      h('button', { class: 'chip', onclick: () => timer.start(sec) }, fmtTime(sec)))));
+      h('button', { class: 'chip', onclick: () => timer.start(sec) }, fmtTime(sec)))),
+    h('div', { class: 'section-row' },
+      h('h3', { class: 'section-title' }, 'Recent sessions'),
+      history.length > 3 && h('button', { class: 'btn small ghost', onclick: sessionsSheet }, `See all ${history.length}`)),
+    history.length ? history.slice(0, 3).map(historyRow) : h('p', { class: 'muted small' }, 'Finished sessions show up here.'));
 }
 
 function historyRow(s) {
@@ -365,10 +477,7 @@ function exerciseCard(s, e) {
         class: 'icon-btn', 'aria-label': 'Add note',
         onclick: () => { openNotes.has(e.id) ? openNotes.delete(e.id) : openNotes.add(e.id); render(); },
       }, '✎')),
-    e.tip && h('details', {
-      class: 'tip', open: openTips.has(e.id),
-      ontoggle: ev => (ev.target.open ? openTips.add(e.id) : openTips.delete(e.id)),
-    }, h('summary', {}, 'How to'), h('p', {}, e.tip)),
+    e.tip && tipText(e.tip, e.id),
     !hasClimbs && h('div', { class: 'sets' },
       e.done.map((d, i) => h('button', {
         class: `set${d ? ' done' : ''}`, 'aria-label': `Set ${i + 1}${d ? ' done' : ''}`,
@@ -686,20 +795,21 @@ function settingsRow(title, sub, onclick) {
 }
 
 function planMenu(p) {
-  const action = (label, fn, cls = '') => h('button', { class: `card list-row menu-item ${cls}`, onclick: () => { closeSheet(); fn(); } }, label);
+  const action = (iconName, label, fn, cls = '') =>
+    h('button', { class: `card list-row menu-item ${cls}`, onclick: () => { closeSheet(); fn(); } }, icon(iconName), label);
   openSheet(p.name, h('div', { class: 'stack' },
-    action('✎  Edit exercises', () => planSheet(p)),
-    action('Aa  Rename', async () => {
+    action('edit', 'Edit plan', () => planSheet(p)),
+    action('rename', 'Rename', async () => {
       const name = prompt('Rename plan', p.name)?.trim();
       if (!name) return;
       await save('plans', { ...p, name });
       render();
     }),
-    action('⧉  Duplicate', async () => {
+    action('duplicate', 'Duplicate', async () => {
       await save('plans', { ...structuredClone(p), id: uid(), name: `${p.name} (copy)`, createdAt: Date.now() });
       render();
     }),
-    action('🗑  Delete', async () => {
+    action('trash', 'Delete', async () => {
       if (!confirm(`Delete “${p.name}”? Past sessions are kept.`)) return;
       await remove('plans', p.id);
       render();
@@ -731,11 +841,70 @@ function settingsView() {
         h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore from backup'), h('p', { class: 'muted small' }, 'Replaces everything on this device')),
         h('span', { class: 'chev' }, '›'),
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => importData(e.target.files[0]) }))),
-    h('p', { class: 'muted small', style: { marginTop: '16px', textAlign: 'center' } }, 'Your data lives only on this phone.'));
+    h('button', { class: 'data-note', onclick: dataInfoSheet }, 'Your data stays on this device', icon('info')));
+}
+
+function dataInfoSheet() {
+  const point = (title, text) => h('div', { class: 'info-point' }, h('strong', {}, title), h('p', { class: 'muted small' }, text));
+  openSheet('How your data is stored', h('div', { class: 'stack' },
+    point('Nothing is uploaded', 'BetaLab has no account and no server. Your plans, sessions, climbs, notes and photos are saved in the app’s private storage on this phone. They never leave your phone, and nobody else can see them.'),
+    point('Photos', 'When you add a photo, BetaLab makes a smaller copy (about 0.2–0.5 MB) and saves it inside the app. Your original photo in the Photos app is not changed or shared.'),
+    point('Where exactly', 'Everything sits in a small database inside your browser’s storage for this website (IndexedDB), on your phone’s own storage. Only BetaLab can read it, because browsers lock each website’s storage to that website.'),
+    point('Install it to your home screen', 'The app files come from GitHub Pages, like loading any website, but your data never goes there. On iPhone, Safari may clear a website’s data after about a week without visits, and a Safari tab keeps separate data from the Home Screen app, so use the installed app. On Android, Chrome keeps the data, and the installed app and the Chrome tab share it.'),
+    point('When data is deleted', 'Removing BetaLab from your home screen (iPhone) or clearing the browser’s site data (iPhone and Android) deletes everything in it. Use Back up data now and then and keep the file somewhere safe, like iCloud Drive, Google Drive or Files.'),
+    point('Sharing with friends', 'Each person who installs BetaLab gets their own empty copy. Nothing is shared between phones unless you send someone a backup file.')));
+}
+
+// The plan being edited is a draft: closing the editor any way except Save/Discard just minimises it
+const DRAFT_KEY = 'betalab.planDraft';
+function persistDraft() {
+  try {
+    const d = state.planDraft;
+    d ? localStorage.setItem(DRAFT_KEY, JSON.stringify({ plan: d.plan, sourceId: d.sourceId })) : localStorage.removeItem(DRAFT_KEY);
+  } catch {}
+}
+function loadDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY));
+    if (d?.plan) state.planDraft = { ...d, open: false };
+  } catch {}
+}
+
+// Reopen the draft even if its plan was deleted meanwhile
+function resumeDraft() {
+  const id = state.planDraft?.sourceId;
+  planSheet(id ? state.plans.find(p => p.id === id) ?? { id } : null);
+}
+
+function unsavedDraftSheet(then) {
+  const d = state.planDraft;
+  const name = d.plan.name || 'your new plan';
+  openSheet('Unsaved changes', h('p', {}, `You’re still editing “${name}”. Save or discard it first.`), [
+    h('button', { class: 'btn', onclick: () => { state.planDraft = null; persistDraft(); closeSheet(); then(); } }, 'Discard'),
+    h('button', { class: 'btn', onclick: () => { closeSheet(); resumeDraft(); } }, 'Keep editing'),
+    h('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        if (!d.plan.name.trim()) { closeSheet(); toast('Give the plan a name'); planSheet(null); return; }
+        await save('plans', d.plan);
+        state.planDraft = null;
+        persistDraft();
+        closeSheet();
+        then();
+      },
+    }, 'Save'),
+  ]);
 }
 
 function planSheet(existing) {
-  const p = existing ? structuredClone(existing) : { id: uid(), name: '', description: '', exercises: [], createdAt: Date.now() };
+  const sourceId = existing?.id ?? null;
+  if (state.planDraft && state.planDraft.sourceId !== sourceId) { unsavedDraftSheet(() => planSheet(existing)); return; }
+  state.planDraft ??= {
+    plan: existing ? structuredClone(existing) : { id: uid(), name: '', description: '', exercises: [], createdAt: Date.now() },
+    sourceId,
+  };
+  state.planDraft.open = true;
+  const p = state.planDraft.plan;
   const body = h('div');
   const move = (i, d) => { const [x] = p.exercises.splice(i, 1); p.exercises.splice(i + d, 0, x); draw(); };
 
@@ -743,13 +912,19 @@ function planSheet(existing) {
     body.replaceChildren(
       field('Name', h('input', { class: 'input', value: p.name, placeholder: 'e.g. Capacity circuit', oninput: e => { p.name = e.target.value; } })),
       field('Description', h('textarea', { class: 'input', rows: 2, value: p.description, placeholder: 'What is this session for?', oninput: e => { p.description = e.target.value; } })),
+      h('div', { class: 'field' }, h('span', {}, 'Type of training'),
+        h('div', { class: 'type-grid' }, TRAINING_TYPES.map(t => h('button', {
+          class: `type-opt${p.type === t.id ? ' on' : ''}`, 'aria-pressed': String(p.type === t.id),
+          onclick: () => { p.type = p.type === t.id ? null : t.id; draw(); },
+        }, icon(t.id), h('span', {}, t.name))))),
       h('h3', { class: 'section-title' }, 'Exercises'),
       ...p.exercises.map((ex, i) => h('div', { class: 'card' },
         h('div', { class: 'row' },
           h('button', { class: 'grow list-row', style: { border: 0, background: 'none', padding: 0 }, onclick: () => exerciseSheet(ex, upd => { p.exercises[i] = upd; draw(); }) },
             h('div', { class: 'grow' },
               h('div', { class: 'card-title' }, ex.name),
-              h('p', { class: 'muted small' }, [ex.section, repsLabel(ex), ex.rest ? `rest ${fmtTime(ex.rest)}` : null].filter(Boolean).join(' · ')))),
+              h('p', { class: 'muted small' }, [ex.section, repsLabel(ex), ex.rest ? `rest ${fmtTime(ex.rest)}` : null].filter(Boolean).join(' · ')),
+              ex.tip && tipText(ex.tip, `plan-${p.id}-${i}`))),
           h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
           h('button', { class: 'icon-btn', 'aria-label': 'Move down', disabled: i === p.exercises.length - 1, onclick: () => move(i, 1) }, '↓'),
           h('button', { class: 'icon-btn', 'aria-label': 'Remove', onclick: () => { p.exercises.splice(i, 1); draw(); } }, '✕')))),
@@ -757,26 +932,28 @@ function planSheet(existing) {
   }
   draw();
 
+  // Edits happen on a copy; only Save writes it back
+  const finish = () => { state.planDraft = null; persistDraft(); closeSheet(); };
   openSheet(existing ? 'Edit plan' : 'New plan', body, [
-    existing && h('button', {
-      class: 'btn danger',
-      onclick: async () => {
-        if (!confirm(`Delete “${p.name}”? Past sessions are kept.`)) return;
-        await remove('plans', p.id);
-        closeSheet();
-        render();
-      },
-    }, 'Delete'),
+    h('button', {
+      class: 'btn',
+      onclick: () => { if (confirm('Discard your changes to this plan?')) finish(); },
+    }, 'Discard'),
     h('button', {
       class: 'btn primary',
       onclick: async () => {
         if (!p.name.trim()) { toast('Give the plan a name'); return; }
         await save('plans', p);
-        closeSheet();
-        render();
+        finish();
       },
     }, 'Save plan'),
-  ]);
+  ], {
+    onClose: () => {
+      if (state.planDraft) { state.planDraft.open = false; persistDraft(); }
+      render();
+    },
+  });
+  renderBars();
 }
 
 function exerciseSheet(existing, onSave) {
@@ -981,11 +1158,12 @@ async function init() {
   }
   await db.put('meta', { id: 'trackClimbs', at: Date.now() });
   state.sessionOpen = !!activeSession();
+  loadDraft();
   navigator.storage?.persist?.();
   document.querySelectorAll('.tabbar button').forEach(b => {
     b.onclick = () => { state.tab = b.dataset.tab; render(); };
   });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPending(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { flushPending(); persistDraft(); } });
   timer.init();
   setInterval(tickClocks, 1000);
   render();
