@@ -140,7 +140,7 @@ textarea.input { resize: vertical; min-height: 80px; }
 .chip.on { border-color: var(--accent); background: var(--accent-soft); }
 
 .seg { display: flex; background: var(--surface-2); border-radius: 12px; padding: 3px; margin-bottom: 10px; }
-.seg button { flex: 1; min-height: 38px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; color: var(--muted); }
+.seg button { flex: 1; min-height: 38px; white-space: nowrap; padding: 0 4px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; color: var(--muted); }
 .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); }
 
 .swatch {

@@ -316,6 +316,7 @@ async function finishSession(s) {
   state.sessionOpen = false;
   render();
   toast('Session saved 💪');
+  maybeRemindBackup();
 }
 
 // Long-press opens the plan's menu; a normal tap starts it
@@ -836,7 +837,15 @@ function settingsView() {
     settingsRow('Grade colours', state.settings.grades.map(g => g.name).join(' → '), gradesSheet),
     h('h3', { class: 'section-title' }, 'Your data'),
     h('div', { class: 'stack' },
-      settingsRow('Back up data', 'Save everything (incl. photos) to a file. Do this now and then!', exportData),
+      settingsRow('Back up data', `${lastBackupText()} · saves everything, photos included`, exportData),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, 'Backup reminder'),
+        h('p', { class: 'muted small' }, 'After a session, remind me if my last backup is older than:'),
+        h('div', { class: 'seg', style: { marginTop: '10px', marginBottom: 0 } }, BACKUP_INTERVALS.map(([days, label]) =>
+          h('button', {
+            class: backupEvery() === days ? 'on' : '',
+            onclick: async () => { state.settings.backupEveryDays = days; await saveSettings(); render(); },
+          }, label)))),
       h('label', { class: 'card list-row' },
         h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore from backup'), h('p', { class: 'muted small' }, 'Replaces everything on this device')),
         h('span', { class: 'chev' }, '›'),
@@ -1095,8 +1104,7 @@ function gradesSheet() {
 // Backup / restore
 const blobToDataUrl = blob => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
 
-async function exportData() {
-  toast('Preparing backup…');
+async function buildBackup() {
   flushPending();
   const photos = await db.getAll('photos');
   const data = {
@@ -1106,15 +1114,66 @@ async function exportData() {
   };
   const name = `betalab-backup-${toDateInput(Date.now())}.json`;
   const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
-  const url = URL.createObjectURL(file);
-  // Sharing needs a fresh tap on iOS, so the backup is offered from a sheet once it's built
-  const canShare = navigator.canShare?.({ files: [file] });
+  const size = file.size > 1048576 ? `${(file.size / 1048576).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`;
+  return { file, summary: `${state.climbs.length} climbs, ${state.sessions.length} sessions, ${photos.length} photos · ${size}` };
+}
+
+async function markBackedUp() {
+  state.settings.lastBackupAt = Date.now();
+  await saveSettings();
+  render();
+  toast('Backup saved');
+}
+
+// The save button for a built backup. Sharing needs a fresh tap on iOS, so the file is built before the button shows
+function backupButton(file, label) {
+  if (navigator.canShare?.({ files: [file] })) {
+    return h('button', {
+      class: 'btn primary',
+      onclick: () => navigator.share({ files: [file], title: 'BetaLab backup' })
+        .then(() => { closeSheet(); markBackedUp(); })
+        .catch(() => {}),
+    }, label);
+  }
+  // Android Chrome can't share .json files, so it downloads instead (lands in Downloads)
+  return h('a', {
+    class: 'btn primary', href: URL.createObjectURL(file), download: file.name,
+    onclick: () => setTimeout(() => { closeSheet(); markBackedUp(); }, 300),
+  }, label);
+}
+
+async function exportData() {
+  toast('Preparing backup…');
+  const { file, summary } = await buildBackup();
   openSheet('Backup ready', h('div', {},
-    h('p', {}, `${state.climbs.length} climbs, ${state.sessions.length} sessions, ${photos.length} photos · ${file.size > 1048576 ? `${(file.size / 1048576).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`}`),
-    h('p', { class: 'muted small', style: { marginTop: '8px' } }, 'Save it to Files, iCloud Drive or send it to yourself. Restore it from Progress → Restore from backup.')), [
-    canShare
-      ? h('button', { class: 'btn primary', onclick: () => navigator.share({ files: [file], title: 'Beta Lab backup' }).then(closeSheet).catch(() => {}) }, 'Save / share file')
-      : h('a', { class: 'btn primary', href: url, download: name, onclick: () => setTimeout(closeSheet, 300) }, 'Download file'),
+    h('p', {}, summary),
+    h('p', { class: 'muted small', style: { marginTop: '8px' } }, 'Save it to iCloud Drive, Google Drive or Files. Restore it from Settings → Restore from backup.')), [
+    backupButton(file, 'Save backup file'),
+  ]);
+}
+
+const BACKUP_INTERVALS = [[3, '3 days'], [7, 'Week'], [14, '2 wks'], [30, 'Month'], [0, 'Off']];
+const backupEvery = () => state.settings.backupEveryDays ?? 7;
+const daysSince = ts => Math.floor((Date.now() - ts) / 86400000);
+function lastBackupText() {
+  const at = state.settings.lastBackupAt;
+  if (!at) return 'Never backed up';
+  const d = daysSince(at);
+  return `Last backup ${d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`}`;
+}
+
+// After a session, nudge for a backup when the last one is older than the chosen interval
+async function maybeRemindBackup() {
+  const every = backupEvery();
+  if (!every) return;
+  const at = state.settings.lastBackupAt;
+  if (at && daysSince(at) < every) return;
+  const { file, summary } = await buildBackup();
+  openSheet('Time for a backup', h('div', {},
+    h('p', {}, `${lastBackupText()}. Save a copy so you don’t lose your climbs if your phone is lost or the app is removed.`),
+    h('p', { class: 'muted small', style: { marginTop: '8px' } }, `${summary}. Change how often you’re reminded in Settings.`)), [
+    h('button', { class: 'btn', onclick: closeSheet }, 'Later'),
+    backupButton(file, 'Back up now'),
   ]);
 }
 

@@ -46,7 +46,7 @@ On launch, the app asks the browser to mark its storage as **persistent** (`navi
 
 **Android:** the installed app (a WebAPK) uses Chrome's storage for the site, so the Chrome tab and the installed app share the same data. Clearing Chrome's site data for `y3l4h.github.io` deletes it.
 
-**Backups:** Settings → **Back up data** writes one JSON file containing every record, with photos embedded as base64 `data:` URLs. **Restore from backup** wipes the stores and loads that file back in. It's the only way to move your data to a new phone, so do it now and then and keep the file in iCloud Drive, Google Drive or Files.
+**Backups:** after you finish a session, BetaLab reminds you to back up if your last backup is older than the interval you pick in Settings (default: a week). Settings → **Back up data** writes one JSON file containing every record, with photos embedded as base64 `data:` URLs. **Restore from backup** wipes the stores and loads that file back in. It's the only way to move your data to a new phone, so do it now and then and keep the file in iCloud Drive, Google Drive or Files.
 
 ## Run locally
 
