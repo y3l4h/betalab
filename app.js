@@ -898,15 +898,15 @@ function settingsView() {
         h('span', { class: 'chev' }, '›'),
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => importData(e.target.files[0]) }))),
     h('h3', { class: 'section-title' }, 'About'),
-    settingsRow('About BetaLab', 'Free hobby project · no ads, no tracking', aboutSheet),
+    settingsRow('About BetaLab', 'Hobby project · no ads, no tracking', aboutSheet),
     h('button', { class: 'data-note', onclick: dataInfoSheet }, 'Your data stays on this device', icon('info')));
 }
 
 function aboutSheet() {
   const point = (title, text) => h('div', { class: 'info-point' }, h('strong', {}, title), h('p', { class: 'muted small' }, text));
   openSheet('About BetaLab', h('div', { class: 'stack' },
-    h('p', {}, 'BetaLab is a free bouldering log made by a climber, for fun. No ads, no accounts, no tracking, and nothing for sale.'),
-    point('Train at your own risk', 'BetaLab isn’t a coach. Any plans, exercises or tips you add or get from others aren’t professional advice. Warm up properly, listen to your body, and be especially careful with finger training like hangboarding. If something hurts, stop and see a professional.'),
+    h('p', {}, 'BetaLab is a hobby project, made by a climber for a climber (myself), but I wanted to share it. No ads, no accounts, no tracking.'),
+    point('Train at your own risk', 'BetaLab isn’t a coach. Any plans, exercises or tips you add or get from others aren’t professional advice. Warm up properly, listen to your body, and be especially careful with finger training like hangboarding. If something hurts, stop and seek a professional.'),
     point('No warranty', 'It’s a personal project, provided as-is. Bugs can happen, and your data lives only on your phone, so use Back up data now and then.'),
     point('Feedback and bugs', 'Found a bug or have an idea? Open an issue on GitHub.'),
     h('a', { class: 'btn ghost full', href: 'https://github.com/y3l4h/betalab/issues', target: '_blank', rel: 'noopener' }, 'Report a bug or suggest a feature'),

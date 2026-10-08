@@ -1,13 +1,56 @@
 # BetaLab – bouldering log
 
-A free, private bouldering tracker that runs as a home-screen web app on iPhone and Android.
+A private bouldering tracker that runs as a home-screen web app on iPhone and Android.
 
-- **Train**: your plans (tap to start, long-press or ⋯ to edit), a session pop-up you can swipe down to minimise, tick off sets and individual climbs per round, rest timer, notes
-- **Climbs**: log climbs with photos, grade (your gym's colours or the V-scale), project / sent / flash, attempts and beta notes
-- **Progress**: session history, sends by grade, sends per week, hardest send, open projects
-- **Settings**: accent colour, grading (gym colours or V-scale), backup reminders, backup and restore
+No accounts and no server: all your data stays on your phone (details below). No ads.
 
-No accounts and no server: all your data stays on your phone (details below). No Adds.
+## Features
+
+### Train
+- **Plans:** build your own training sessions from exercises. Each exercise has a section (Warm-up, Main, Strength, Antagonist, Cool-down), sets, reps or detail, rest time and a how-to tip.
+- **Training types:** tag each plan as Endurance, Power endurance, Strength & power, Conditioning, Body tension, Technique, Projecting, Mobility or Fun, each with its own icon.
+- **Start a session:** tap a plan card, then confirm. **Empty session** starts one without a plan, and you add exercises as you go.
+- **Plan menu:** long-press a plan card, or tap **⋯**, to edit, rename, duplicate or delete it.
+- **Unsaved edits are kept:** closing the plan editor (swipe down, ✕ or back) minimises it to a bar instead of losing your changes. Only **Discard** throws them away, and the draft survives closing the app.
+- **Quick rest timer** with 1–5 minute presets.
+- **Recent sessions:** your last three sessions, with **See all** for the rest.
+
+### During a session
+- **Session pop-up** with a frozen header: **Finish**, a live session clock, and **⏱ Rest** for a quick rest of 0:30–4:00.
+- **Tick off sets** by tapping the numbered dots. Use **+** to add a set.
+- **Automatic rest timer** after each set, with −15 / +15 / stop buttons, 3-2-1 beeps, and the screen kept awake while it runs.
+- **Track individual climbs:** add the actual problems to an exercise (e.g. the 4 in a circuit). Each one gets its own dot per round, a round completes when every climb in it is ticked, and **+ Round** adds another round.
+- **How-to tips** shown on each exercise, cut to two lines; tap to read the whole tip.
+- **Notes** on each exercise and on the whole session.
+- **Add climb** straight from the session.
+- **Minimise:** swipe down to shrink the session to a bar above the tabs and keep using the app. Tap or swipe up to bring it back.
+- **Discard session** if you started one by mistake.
+
+### Climbs
+- **Log a climb** with a grade, name or wall, status (**Project / Sent / Flash**), number of attempts, date and beta notes.
+- **Photos:** take one or pick from your gallery. Photos are shrunk to save space.
+- **Videos:** pick a video and BetaLab saves a still frame from it as the photo. The video itself stays in your gallery.
+- **Filter** by All / Projects / Sent and by grade.
+
+### Progress
+- **Sessions:** full history of finished sessions; tap one for its sets, notes and climbs.
+- **Stats:** sessions this month, total sends, hardest send and open projects.
+- **Sends by grade:** a grade pyramid, with flashes marked ⚡.
+- **Sends per week** for the last 8 weeks.
+
+### Settings
+- **Accent colour:** 8 presets or any custom colour.
+- **Grading:** your gym's colours (rename, recolour and reorder them) or the V-scale (VB–V10+).
+- **Backups:** **Back up data** saves everything, photos included, to one file, and Settings shows when you last backed up. **Restore from backup** loads a file back in.
+- **Backup reminders:** after a session, a nudge to back up if it's been longer than 3 days, a week, 2 weeks or a month (or turn it off).
+- **About**, and **How your data is stored**.
+
+### Works like an app
+- **Install** to your home screen on iPhone and Android, opening full-screen.
+- **Works offline** at the gym.
+- **Gestures:** swipe pop-ups down to close them, long-press plan cards.
+- **Android back button:** closes the top pop-up, then minimises a session or plan edit.
+- **Light and dark mode** follow your phone's setting.
 
 ## About
 
