@@ -7,13 +7,13 @@ A free, private bouldering tracker that runs as a home-screen web app on iPhone 
 - **Progress**: session history, sends by grade, sends per week, hardest send, open projects
 - **Settings**: accent colour, grading (gym colours or V-scale), backup reminders, backup and restore
 
-No accounts and no server: all your data stays on your phone (details below).
+No accounts and no server: all your data stays on your phone (details below). No Adds.
 
 ## About
 
-BetaLab is a free hobby project, made by a climber for fun. It has no ads, no accounts and no tracking, and nothing is for sale.
+BetaLab is a hobby project, made by a climber for a climber (myself), but wanted to share it. 
 
-- **Train at your own risk.** BetaLab isn't a coach. Any plans, exercises or tips you add or get from others aren't professional advice. Warm up properly, listen to your body, and be especially careful with finger training like hangboarding. If something hurts, stop and see a professional.
+- **Train at your own risk.** BetaLab isn't a coach. Any plans, exercises or tips you add or get from others aren't professional advice. Warm up properly, listen to your body, and be especially careful with finger training like hangboarding. If something hurts, stop and seek a professional.
 - **No warranty.** It's a personal project, provided as-is. Bugs can happen, and your data lives only on your phone, so use **Back up data** now and then.
 - **Feedback and bugs.** Found a bug or have an idea? [Open an issue](https://github.com/y3l4h/betalab/issues) (needs a free GitHub account).
 
