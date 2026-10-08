@@ -85,17 +85,48 @@ function photoImg(id, cls) {
   photoUrl(id).then(u => { if (u) img.src = u; });
   return img;
 }
-async function compressImage(file, max = 1600, quality = 0.82) {
+function drawToJpeg(source, width, height, max = 1600, quality = 0.82) {
+  const scale = Math.min(1, max / Math.max(width, height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(width * scale);
+  c.height = Math.round(height * scale);
+  c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
+  return new Promise(res => c.toBlob(res, 'image/jpeg', quality));
+}
+
+async function compressImage(file) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    const c = document.createElement('canvas');
-    c.width = Math.round(img.naturalWidth * scale);
-    c.height = Math.round(img.naturalHeight * scale);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    return await new Promise(res => c.toBlob(res, 'image/jpeg', quality));
+    return await drawToJpeg(img, img.naturalWidth, img.naturalHeight);
   } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Grab one frame from a video (about 40% in, past the chalking-up) and keep it as a photo; the video isn't stored
+async function videoThumbnail(file) {
+  const url = URL.createObjectURL(file);
+  const v = document.createElement('video');
+  v.muted = true;
+  v.playsInline = true;
+  v.preload = 'auto';
+  try {
+    const wait = event => new Promise((res, rej) => {
+      v.addEventListener(event, res, { once: true });
+      v.addEventListener('error', () => rej(v.error), { once: true });
+    });
+    const loaded = wait('loadeddata');
+    v.src = url;
+    v.load();
+    await loaded;
+    const seeked = wait('seeked');
+    v.currentTime = Number.isFinite(v.duration) && v.duration > 0 ? v.duration * 0.4 : 0.1;
+    await seeked;
+    return await drawToJpeg(v, v.videoWidth, v.videoHeight);
+  } finally {
+    v.removeAttribute('src');
+    v.load();
     URL.revokeObjectURL(url);
   }
 }
@@ -669,10 +700,13 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
   const body = h('div');
 
   const fileInput = h('input', {
-    type: 'file', accept: 'image/*', multiple: true, hidden: true,
+    type: 'file', accept: 'image/*,video/*', multiple: true, hidden: true,
     onchange: async e => {
       for (const file of e.target.files) {
-        const blob = await compressImage(file);
+        const isVideo = file.type.startsWith('video/');
+        if (isVideo) toast('Grabbing a frame from your video…');
+        const blob = await (isVideo ? videoThumbnail(file) : compressImage(file)).catch(() => null);
+        if (!blob) { toast(isVideo ? 'Couldn’t read that video. Try a screenshot instead.' : 'Couldn’t read that photo'); continue; }
         const id = uid();
         newPhotos.set(id, { blob, url: URL.createObjectURL(blob) });
         c.photoIds.push(id);
@@ -707,7 +741,7 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
     body.replaceChildren(
       h('div', { class: 'photos' },
         c.photoIds.map(photoThumb),
-        h('label', { class: 'photo-add' }, h('span', {}, '📷'), 'Add photo', fileInput)),
+        h('label', { class: 'photo-add' }, h('span', {}, '📷'), 'Photo or video', fileInput)),
       h('div', { class: 'field' }, h('span', {}, state.settings.gradeScale === 'v' ? 'Grade' : 'Colour'),
         h('div', { class: 'grade-picker' }, activeGrades().map(g =>
           h('button', { class: `grade-opt${c.grade === g.id ? ' on' : ''}`, onclick: () => { c.grade = g.id; draw(); } },
