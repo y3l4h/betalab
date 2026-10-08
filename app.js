@@ -1,6 +1,6 @@
 import * as db from './db.js';
 import * as timer from './timer.js';
-import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS } from './defaults.js';
+import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS, V_SCALE } from './defaults.js';
 import { TRAINING_TYPES, icon } from './icons.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
@@ -34,8 +34,11 @@ const fmtDuration = ms => {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 };
 const toDateInput = ts => { const d = new Date(ts); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
-const grade = id => state.settings.grades.find(g => g.id === id) ?? { id, name: '?', color: '#888888' };
-const gradeIndex = id => state.settings.grades.findIndex(g => g.id === id);
+// Grades come from the chosen scale; climbs logged under the other scale still show their own grade
+const activeGrades = () => (state.settings.gradeScale === 'v' ? V_SCALE : state.settings.grades);
+const grade = id => activeGrades().find(g => g.id === id) ?? state.settings.grades.find(g => g.id === id)
+  ?? V_SCALE.find(g => g.id === id) ?? { id, name: '?', color: '#888888' };
+const gradeIndex = id => activeGrades().findIndex(g => g.id === id);
 const swatch = (id, cls = '') => h('span', { class: `swatch ${cls}`, style: { background: grade(id).color } });
 const activeSession = () => state.sessions.find(s => !s.endedAt);
 const repsLabel = e => (e.sets > 1 ? `${e.sets} × ${e.reps || 'sets'}` : e.reps || '1 set');
@@ -635,7 +638,7 @@ function climbsView() {
     h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'), h('button', { class: 'btn primary', onclick: () => climbSheet(null) }, '+ Add climb')),
     h('div', { class: 'seg' }, [['all', 'All'], ['project', 'Projects'], ['sent', 'Sent']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.climbFilter = k; render(); } }, label))),
-    h('div', { class: 'chip-row' }, state.settings.grades.map(gr =>
+    h('div', { class: 'chip-row' }, activeGrades().map(gr =>
       h('button', {
         class: `chip${g === gr.id ? ' on' : ''}`,
         onclick: () => { state.gradeFilter = g === gr.id ? null : gr.id; render(); },
@@ -658,7 +661,7 @@ function climbTile(c, onClick = () => climbSheet(c)) {
 function climbSheet(existing, sessionId = null, onSaved = null) {
   const lastGrade = [...state.climbs].sort((a, b) => b.date - a.date)[0]?.grade;
   const c = existing ? structuredClone(existing) : {
-    id: uid(), date: Date.now(), grade: lastGrade ?? state.settings.grades[0]?.id, name: '', status: 'project',
+    id: uid(), date: Date.now(), grade: (gradeIndex(lastGrade) >= 0 ? lastGrade : null) ?? activeGrades()[0]?.id, name: '', status: 'project',
     attempts: 1, notes: '', photoIds: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null,
   };
   const newPhotos = new Map();
@@ -705,8 +708,8 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
       h('div', { class: 'photos' },
         c.photoIds.map(photoThumb),
         h('label', { class: 'photo-add' }, h('span', {}, '📷'), 'Add photo', fileInput)),
-      h('div', { class: 'field' }, h('span', {}, 'Colour'),
-        h('div', { class: 'grade-picker' }, state.settings.grades.map(g =>
+      h('div', { class: 'field' }, h('span', {}, state.settings.gradeScale === 'v' ? 'Grade' : 'Colour'),
+        h('div', { class: 'grade-picker' }, activeGrades().map(g =>
           h('button', { class: `grade-opt${c.grade === g.id ? ' on' : ''}`, onclick: () => { c.grade = g.id; draw(); } },
             swatch(g.id, 'lg'), g.name)))),
       field('Name or wall (optional)', h('input', {
@@ -834,7 +837,17 @@ function settingsView() {
           'Custom',
           h('input', { type: 'color', value: current, class: 'visually-hidden', onchange: e => setAccent(e.target.value) })))),
     h('h3', { class: 'section-title' }, 'Climbing'),
-    settingsRow('Grade colours', state.settings.grades.map(g => g.name).join(' → '), gradesSheet),
+    h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, 'Grading'),
+      h('p', { class: 'muted small' }, 'How your gym grades its problems. Climbs keep the grade they were logged with.'),
+      h('div', { class: 'seg', style: { marginTop: '10px', marginBottom: 0 } }, [['colours', 'Gym colours'], ['v', 'V-scale']].map(([id, label]) =>
+        h('button', {
+          class: (state.settings.gradeScale ?? 'colours') === id ? 'on' : '',
+          onclick: async () => { state.settings.gradeScale = id; state.gradeFilter = null; await saveSettings(); render(); },
+        }, label)))),
+    state.settings.gradeScale === 'v'
+      ? h('p', { class: 'muted small', style: { margin: '8px 2px 0' } }, V_SCALE.map(g => g.name).join(' → '))
+      : settingsRow('Edit gym colours', state.settings.grades.map(g => g.name).join(' → '), gradesSheet),
     h('h3', { class: 'section-title' }, 'Your data'),
     h('div', { class: 'stack' },
       settingsRow('Back up data', `${lastBackupText()} · saves everything, photos included`, exportData),
@@ -1025,7 +1038,7 @@ function progressView() {
   const done = state.sessions.filter(s => s.endedAt);
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
   const hardest = sends.reduce((best, c) => (gradeIndex(c.grade) > gradeIndex(best?.grade) ? c : best), null);
-  const grades = state.settings.grades;
+  const grades = activeGrades();
   const perGrade = grades.map(g => ({
     g, sent: sends.filter(c => c.grade === g.id).length, flash: sends.filter(c => c.grade === g.id && c.status === 'flash').length,
   }));
