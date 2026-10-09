@@ -3,6 +3,7 @@ import * as timer from './timer.js';
 import { CLIMB_EXERCISES, GYM_PRESETS, SECTIONS, V_SCALE } from './defaults.js';
 import { TRAINING_TYPES, icon } from './icons.js';
 import { APP_VERSION, CHANGES } from './changelog.js';
+import { createMapViewer } from './map.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
 const openNotes = new Set();
@@ -108,11 +109,11 @@ function drawToJpeg(source, width, height, max = 1600, quality = 0.82) {
   return new Promise(res => c.toBlob(res, 'image/jpeg', quality));
 }
 
-async function compressImage(file) {
+async function compressImage(file, max = 1600) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    return await drawToJpeg(img, img.naturalWidth, img.naturalHeight);
+    return await drawToJpeg(img, img.naturalWidth, img.naturalHeight, max);
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -254,7 +255,7 @@ function render() {
   const main = document.getElementById('main');
   const y = window.scrollY;
   const same = main.dataset.tab === state.tab;
-  const views = { train: trainView, climbs: climbsView, progress: progressView, settings: settingsView };
+  const views = { train: trainView, climbs: climbsView, progress: progressView, map: mapView, settings: settingsView };
   main.replaceChildren(views[state.tab]());
   main.dataset.tab = state.tab;
   window.scrollTo(0, same ? y : 0);
@@ -461,14 +462,14 @@ function historyRow(s) {
     h('span', { class: 'chev' }, '›'));
 }
 
-async function startSession(plan) {
+async function startSession(plan, name) {
   if (activeSession()) {
     toast('Finish your current session first');
     openSession();
     return;
   }
   const s = {
-    id: uid(), planId: plan?.id ?? null, name: plan?.name ?? 'Session', startedAt: Date.now(), endedAt: null, notes: '', gymId: activeGym().id,
+    id: uid(), planId: plan?.id ?? null, name: plan?.name ?? name ?? 'Session', startedAt: Date.now(), endedAt: null, notes: '', gymId: activeGym().id,
     exercises: (plan?.exercises ?? []).map(e => ({ ...e, id: uid(), done: Array(e.sets).fill(false), note: '', climbIds: [], climbDone: {} })),
   };
   await save('sessions', s);
@@ -748,7 +749,10 @@ function climbsView() {
     .filter(c => inActiveGym(c) && (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!g || c.grade === g))
     .sort((a, b) => b.date - a.date);
   return h('div', {},
-    h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'), h('button', { class: 'btn primary', onclick: () => climbSheet(null) }, '+ Add climb')),
+    h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'),
+      h('div', { class: 'row' },
+        !activeSession() && h('button', { class: 'btn ghost', 'aria-label': 'Start a climbing session', onclick: confirmClimbingSession }, icon('play'), 'Session'),
+        h('button', { class: 'btn primary', onclick: () => climbSheet(null) }, '+ Add climb'))),
     gymSwitcher(),
     h('div', { class: 'seg' }, [['all', 'All'], ['project', 'Projects'], ['sent', 'Sent']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.climbFilter = k; render(); } }, label))),
@@ -777,6 +781,154 @@ async function setActiveGym(id) {
   state.gradeFilter = null;
   await saveSettings();
   render();
+}
+
+function confirmClimbingSession() {
+  const name = `Climbing · ${activeGym().name}`;
+  openSheet('Start a climbing session?', h('div', {},
+    h('p', {}, name),
+    h('p', { class: 'muted small', style: { marginTop: '6px' } }, 'No plan, just climbing. Climbs you add while it’s running are saved to it.')), [
+    h('button', { class: 'btn', onclick: closeSheet }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: () => { closeSheet(); startSession(null, name); } }, 'Start'),
+  ]);
+}
+
+// Map tab: a photo of the gym's map with climbs pinned on it
+const RECENT_DAYS = 42;
+const mapViews = {};
+
+function pinFor(c, extra = {}) {
+  return { id: c.id, x: c.pin.x, y: c.pin.y, color: climbGrade(c).color, ring: c.status === 'project', label: c.name || climbGrade(c).name, item: c, ...extra };
+}
+
+function climbsHereSheet(climbs) {
+  openSheet(`${climbs.length} climbs here`, h('div', { class: 'climb-grid' },
+    [...climbs].sort((a, b) => b.date - a.date).map(c => climbTile(c, () => { closeSheet(); climbSheet(c); }))));
+}
+
+function mapView() {
+  const gym = activeGym();
+  const head = h('header', { class: 'page-head' }, h('h1', {}, 'Map'),
+    gym.map && h('button', { class: 'btn small ghost', onclick: () => mapOptionsSheet(gym) }, 'Map options'));
+  if (!gym.map) {
+    return h('div', {}, head, gymSwitcher(),
+      h('div', { class: 'card empty-map' },
+        icon('map', 'type-badge lg'),
+        h('div', { class: 'card-title' }, `Add a map of ${gym.name}`),
+        h('p', { class: 'muted small' }, 'Take a photo of the gym’s floor plan or wall map, or use a screenshot from their website. Then pin climbs to see where everything is.'),
+        h('label', { class: 'btn primary' }, icon('map'), 'Add map', gymMapInput(gym))));
+  }
+  const f = state.mapFilter ?? 'recent';
+  const g = state.mapGrade;
+  const cutoff = Date.now() - RECENT_DAYS * 86400000;
+  const inGym = state.climbs.filter(inActiveGym);
+  const matches = c => (f === 'all' || (f === 'projects' ? c.status === 'project' : c.date >= cutoff)) && (!g || c.grade === g);
+  const shown = inGym.filter(c => c.pin && matches(c));
+  const unpinned = inGym.filter(c => !c.pin && matches(c)).length;
+  const view = (mapViews[gym.id] ??= {});
+  const viewer = createMapViewer({
+    url: photoUrl(gym.map.photoId), width: gym.map.w, height: gym.map.h, view,
+    pins: shown.map(c => pinFor(c)),
+    onPin: pin => climbSheet(pin.item),
+    onCluster: climbsHereSheet,
+  });
+  return h('div', {}, head, gymSwitcher(),
+    h('div', { class: 'seg' }, [['recent', 'Recent'], ['projects', 'Projects'], ['all', 'All time']].map(([k, label]) =>
+      h('button', { class: f === k ? 'on' : '', onclick: () => { state.mapFilter = k; render(); } }, label))),
+    h('div', { class: 'chip-row' }, activeGrades().map(gr => h('button', {
+      class: `chip${g === gr.id ? ' on' : ''}`,
+      onclick: () => { state.mapGrade = g === gr.id ? null : gr.id; render(); },
+    }, swatch(gr.id, '', gym.id), gr.name))),
+    h('div', { class: 'map-wrap' }, viewer.el,
+      h('div', { class: 'map-zoom' },
+        h('button', { class: 'icon-btn', 'aria-label': 'Zoom in', onclick: viewer.zoomIn }, icon('plus')),
+        h('button', { class: 'icon-btn', 'aria-label': 'Zoom out', onclick: viewer.zoomOut }, icon('minus')))),
+    h('p', { class: 'muted small map-note' },
+      `${shown.length} climb${shown.length === 1 ? '' : 's'} shown${f === 'recent' ? ` from the last ${RECENT_DAYS / 7} weeks` : ''}. Rings are projects; bubbles group climbs close together.`,
+      unpinned ? ` ${unpinned} not pinned yet: open a climb and tap “Pin on map”.` : ''));
+}
+
+// A file input that saves the chosen image as the gym's map; wrap it in a label so the picker opens straight from the tap
+function gymMapInput(gym, replacing = false) {
+  return h('input', {
+    type: 'file', accept: 'image/*', hidden: true,
+    onchange: async e => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      if (replacing) closeSheet();
+      toast('Saving map…');
+      const blob = await compressImage(file, 2400).catch(() => null);
+      if (!blob) { toast('Couldn’t read that image'); return; }
+      const bitmap = await createImageBitmap(blob);
+      const id = uid();
+      await db.put('photos', { id, blob });
+      if (gym.map?.photoId) { await db.del('photos', gym.map.photoId); photoUrls.delete(gym.map.photoId); }
+      gym.map = { photoId: id, w: bitmap.width, h: bitmap.height };
+      delete mapViews[gym.id];
+      await saveSettings();
+      render();
+      toast(replacing ? 'Map replaced' : 'Map added. Now pin some climbs!');
+    },
+  });
+}
+
+function mapOptionsSheet(gym) {
+  openSheet(`${gym.name} map`, h('div', { class: 'stack' },
+    h('label', { class: 'card list-row menu-item' }, icon('map'),
+      h('div', {}, h('div', {}, 'Replace map'),
+        h('p', { class: 'muted small', style: { fontWeight: 400 } }, 'Pins keep their spot on the image, so use a map with the same layout.')),
+      gymMapInput(gym, true)),
+    h('button', {
+      class: 'card list-row menu-item danger-text',
+      onclick: async () => {
+        if (!confirm('Remove this map? Your climbs keep their pins, so they’ll come back if you add the same map again.')) return;
+        await db.del('photos', gym.map.photoId);
+        photoUrls.delete(gym.map.photoId);
+        delete gym.map;
+        await saveSettings();
+        closeSheet();
+        render();
+      },
+    }, icon('trash'), 'Remove map')));
+}
+
+// In the climb form: pin (or move) the climb on its gym's map
+function mapPinField(c, redraw) {
+  const gym = gymById(c.gymId);
+  if (!gym?.map) return '';
+  return h('div', { class: 'field' }, h('span', {}, 'On the map'),
+    h('button', { class: 'btn small', onclick: () => pinSheet(c, gym, redraw) }, icon('pin'), c.pin ? 'Pinned · move pin' : 'Pin on map'));
+}
+
+function pinSheet(c, gym, onDone) {
+  let spot = c.pin ? { ...c.pin } : null;
+  const color = grade(c.grade, gym.id).color;
+  const others = state.climbs
+    .filter(x => x.id !== c.id && x.pin && climbGymId(x) === gym.id && x.date >= Date.now() - RECENT_DAYS * 86400000)
+    .map(x => pinFor(x, { faint: true }));
+  const viewer = createMapViewer({
+    url: photoUrl(gym.map.photoId), width: gym.map.w, height: gym.map.h, pins: others,
+    selected: spot && { ...spot, id: c.id, color },
+    onTap: m => { spot = m; viewer.setSelected({ ...m, id: c.id, color }); },
+  });
+  openSheet('Pin on map', h('div', {},
+    h('p', { class: 'muted small', style: { marginBottom: '10px' } }, 'Tap where the climb is. Pinch or double-tap to zoom. Faded dots are your other recent climbs.'),
+    h('div', { class: 'map-wrap pin-mode' }, viewer.el,
+      h('div', { class: 'map-zoom' },
+        h('button', { class: 'icon-btn', 'aria-label': 'Zoom in', onclick: viewer.zoomIn }, icon('plus')),
+        h('button', { class: 'icon-btn', 'aria-label': 'Zoom out', onclick: viewer.zoomOut }, icon('minus'))))), [
+    c.pin && h('button', { class: 'btn danger', onclick: () => { c.pin = null; closeSheet(); onDone(); } }, 'Remove pin'),
+    h('button', {
+      class: 'btn primary',
+      onclick: () => {
+        if (!spot) { toast('Tap the map to place the pin'); return; }
+        c.pin = { x: +spot.x.toFixed(4), y: +spot.y.toFixed(4) };
+        closeSheet();
+        onDone();
+      },
+    }, 'Done'),
+  ]);
 }
 
 function climbTile(c, onClick = () => climbSheet(c)) {
@@ -847,6 +999,7 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         h('div', { class: 'chip-row' }, state.settings.gyms.map(gym => h('button', {
           class: `chip${c.gymId === gym.id ? ' on' : ''}`,
           onclick: () => {
+            if (c.gymId !== gym.id) c.pin = null;
             c.gymId = gym.id;
             const grades = gymGrades(gym);
             if (!grades.some(g => g.id === c.grade)) c.grade = grades[0]?.id;
@@ -857,6 +1010,7 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         h('div', { class: 'grade-picker' }, gymGrades(gymById(c.gymId)).map(g =>
           h('button', { class: `grade-opt${c.grade === g.id ? ' on' : ''}`, onclick: () => { c.grade = g.id; draw(); } },
             swatch(g.id, 'lg', c.gymId), g.name)))),
+      mapPinField(c, draw),
       field('Name or wall (optional)', h('input', {
         class: 'input', value: c.name, placeholder: 'e.g. Cave overhang, the pinchy one',
         oninput: e => { c.name = e.target.value; },
@@ -1295,6 +1449,7 @@ function gymSheet(existing) {
         const count = state.climbs.filter(c => climbGymId(c) === gym.id).length;
         const moveTo = gym.id === state.settings.gyms[0].id ? others[0] : state.settings.gyms[0];
         if (!confirm(`Delete ${gym.name}?${count ? ` Your ${count} climb${count > 1 ? 's' : ''} logged there will show under ${moveTo.name}.` : ''}`)) return;
+        if (gym.map?.photoId) await db.del('photos', gym.map.photoId);
         state.settings.gyms = others;
         if (state.settings.activeGymId === gym.id) state.settings.activeGymId = others[0].id;
         await saveSettings();

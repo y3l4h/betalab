@@ -427,3 +427,33 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
   border-radius: 16px; background: var(--text); color: var(--bg); font-weight: 600; font-size: 15px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .25); animation: up .2s ease-out;
 }
+
+/* Gym map */
+.map-wrap { position: relative; margin-top: 4px; }
+.map-stage {
+  position: relative; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+  height: max(320px, calc(100dvh - 330px - var(--bars, 0) * 60px)); border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border); cursor: grab;
+}
+.pin-mode .map-stage { height: min(62dvh, 560px); cursor: crosshair; }
+.map-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; pointer-events: none; -webkit-user-drag: none; }
+.map-pins { position: absolute; inset: 0; pointer-events: none; }
+.map-pin, .map-cluster {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: auto; border: 0; padding: 0;
+  box-shadow: 0 0 0 2px var(--surface), 0 2px 6px rgba(0, 0, 0, .35);
+}
+.map-pin { width: 18px; height: 18px; border-radius: 50%; }
+.map-pin.ring { box-shadow: 0 0 0 2px var(--surface), 0 0 0 5px var(--accent), 0 2px 6px rgba(0, 0, 0, .35); }
+.map-pin::after { content: ""; position: absolute; inset: -12px; }
+.map-pin.selected { width: 24px; height: 24px; pointer-events: none; box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--accent), 0 4px 12px rgba(0, 0, 0, .45); }
+.map-cluster {
+  border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 13px;
+  background: var(--text); color: var(--bg);
+}
+.map-cluster.single-colour { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
+.faint { opacity: .45; pointer-events: none; }
+.map-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.map-zoom .icon-btn { background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(0, 0, 0, .25); }
+.map-note { margin-top: 8px; }
+.empty-map { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.page-head .row .btn .icon { width: 16px; height: 16px; }

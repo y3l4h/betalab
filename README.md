@@ -34,9 +34,11 @@ BetaLab is a hobby project, made by a climber for a climber (myself), but I want
 
 ## Features
 
+The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settings**.
+
 ### Train
 - **Plans:** build your own training sessions from exercises. Each exercise has a section (Warm-up, Main, Strength, Antagonist, Cool-down), sets, reps or detail, rest time and a how-to tip.
-- **Training types:** tag each plan as Endurance, Power endurance, Strength & power, Conditioning, Body tension, Technique, Projecting, Mobility or Fun, each with its own icon.
+- **Training types:** tag each plan as Endurance, Power endurance, Strength & power, Conditioning, Body tension, Technique, Projecting, Mobility, Rehab or Fun, each with its own icon.
 - **Start a session:** tap a plan card, then confirm. **Empty session** starts one without a plan, and you add exercises as you go.
 - **Plan menu:** long-press a plan card, or tap **⋯**, to edit, rename, duplicate or delete it.
 - **Unsaved edits are kept:** closing the plan editor (swipe down, ✕ or back) minimises it to a bar instead of losing your changes. Only **Discard** throws them away, and the draft survives closing the app.
@@ -60,7 +62,16 @@ BetaLab is a hobby project, made by a climber for a climber (myself), but I want
 - **Photos:** take one or pick from your gallery. Photos are shrunk to save space.
 - **Videos:** pick a video and BetaLab saves a still frame from it as the photo. The video itself stays in your gallery.
 - **Gyms:** switch between your gyms at the top of the page. Each gym shows its own climbs and grades.
+- **Pin on map:** place the climb on your gym's map (see Map below).
+- **▶ Session:** start a climbing session without a plan; climbs you add while it runs are saved to it.
 - **Filter** by All / Projects / Sent and by grade.
+
+### Map
+- **Your gym's map:** add a photo of the gym's floor plan or wall map (or a screenshot from their website), one per gym.
+- **Pinned climbs** show as dots coloured by grade, and projects have a ring. Tap a dot to open the climb.
+- **Bubbles:** climbs close together group into a numbered bubble. Tap it to see all of them, or zoom in to split it up.
+- **Zoom and pan:** pinch, double-tap or use the + / − buttons, and drag to move around.
+- **Filters:** Recent (last 6 weeks, so old reset problems drop off), Projects or All time, plus grade.
 
 ### Progress
 - **Sessions:** full history of finished sessions; tap one for its sets, notes and climbs.

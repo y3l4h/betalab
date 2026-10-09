@@ -1,7 +1,17 @@
 // Newest first. Bump APP_VERSION (and CACHE in sw.js) with every release; people see the entries they haven't seen yet
-export const APP_VERSION = '1.6';
+export const APP_VERSION = '1.7';
 
 export const CHANGES = [
+  {
+    version: '1.7', date: '2026-10-09', items: [
+      'New Map tab: add a photo of your gym’s map and pin climbs on it. Pins are coloured by grade, projects have a ring, and climbs close together group into a bubble you can tap.',
+      'Filter the map by recent climbs (last 6 weeks), projects or all time, and by grade.',
+      'Start a climbing session straight from the Climbs page with ▶ Session.',
+      'Tabs are now Progress, Climbs, Train, Map and Settings.',
+      'New training type: Rehab.',
+      'New app icon. On iPhone, re-add BetaLab to your home screen to see it.',
+    ],
+  },
   {
     version: '1.6', date: '2026-10-09', items: [
       'Gyms: keep separate colour grades for each gym you climb at (Urban Climb and 9 Degrees are built in) and switch between them on Climbs and Progress.',
