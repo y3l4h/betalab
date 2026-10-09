@@ -1488,8 +1488,8 @@ async function buildBackup() {
     settings: state.settings, plans: state.plans, sessions: state.sessions, climbs: state.climbs,
     photos: await Promise.all(photos.map(async p => ({ id: p.id, data: await blobToDataUrl(p.blob) }))),
   };
-  const name = `betalab-backup-${toDateInput(Date.now())}.json`;
-  const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
+  // Same name every time, so saving to the same folder replaces the last backup instead of piling up copies
+  const file = new File([JSON.stringify(data)], BACKUP_NAME, { type: 'application/json' });
   const size = file.size > 1048576 ? `${(file.size / 1048576).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`;
   return { file, summary: `${state.climbs.length} climbs, ${state.sessions.length} sessions, ${photos.length} photos · ${size}` };
 }
@@ -1501,8 +1501,35 @@ async function markBackedUp() {
   toast('Backup saved');
 }
 
+const BACKUP_NAME = 'BetaLab backup.json';
+const BACKUP_HINT = 'Save it to the same place every time and tap Replace, so this phone only ever has one backup file.';
+
+// Where the browser lets a web app keep a file it was given (Chrome, some Android), later backups overwrite it in one tap
+const canKeepFile = 'showSaveFilePicker' in window;
+
+async function writeKeptFile(file) {
+  let handle = (await db.get('meta', 'backupFile'))?.handle;
+  if (handle && (await handle.requestPermission({ mode: 'readwrite' })) !== 'granted') handle = null;
+  if (!handle) {
+    handle = await window.showSaveFilePicker({ suggestedName: BACKUP_NAME, types: [{ description: 'BetaLab backup', accept: { 'application/json': ['.json'] } }] });
+    await db.put('meta', { id: 'backupFile', handle });
+  }
+  const out = await handle.createWritable();
+  await out.write(file);
+  await out.close();
+  return handle.name;
+}
+
 // The save button for a built backup. Sharing needs a fresh tap on iOS, so the file is built before the button shows
 function backupButton(file, label) {
+  if (canKeepFile) {
+    return h('button', {
+      class: 'btn primary',
+      onclick: () => writeKeptFile(file)
+        .then(name => { closeSheet(); markBackedUp(); toast(`Saved over ${name}`); })
+        .catch(e => { if (e.name !== 'AbortError') toast('Couldn’t save the backup. Try again.'); }),
+    }, label);
+  }
   if (navigator.canShare?.({ files: [file] })) {
     return h('button', {
       class: 'btn primary',
@@ -1523,7 +1550,9 @@ async function exportData() {
   const { file, summary } = await buildBackup();
   openSheet('Backup ready', h('div', {},
     h('p', {}, summary),
-    h('p', { class: 'muted small', style: { marginTop: '8px' } }, 'Save it to iCloud Drive, Google Drive or Files. Restore it from Settings → Restore from backup.')), [
+    h('p', { class: 'muted small', style: { marginTop: '8px' } }, canKeepFile
+      ? 'The first time, choose where to keep it. After that, backing up overwrites the same file.'
+      : `Save it to iCloud Drive, Google Drive or Files. ${BACKUP_HINT}`)), [
     backupButton(file, 'Save backup file'),
   ]);
 }
@@ -1547,7 +1576,7 @@ async function maybeRemindBackup() {
   const { file, summary } = await buildBackup();
   openSheet('Time for a backup', h('div', {},
     h('p', {}, `${lastBackupText()}. Save a copy so you don’t lose your climbs if your phone is lost or the app is removed.`),
-    h('p', { class: 'muted small', style: { marginTop: '8px' } }, `${summary}. Change how often you’re reminded in Settings.`)), [
+    h('p', { class: 'muted small', style: { marginTop: '8px' } }, `${summary}. ${canKeepFile ? '' : 'Tap Replace when saving so you keep just one file. '}Change how often you’re reminded in Settings.`)), [
     h('button', { class: 'btn', onclick: closeSheet }, 'Later'),
     backupButton(file, 'Back up now'),
   ]);

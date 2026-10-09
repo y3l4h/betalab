@@ -1,7 +1,13 @@
 // Newest first. Bump APP_VERSION (and CACHE in sw.js) with every release; people see the entries they haven't seen yet
-export const APP_VERSION = '1.8';
+export const APP_VERSION = '1.9';
 
 export const CHANGES = [
+  {
+    version: '1.9', date: '2026-10-09', items: [
+      'Backups now always use the same file name, “BetaLab backup.json”. Save it to the same place and tap Replace, so each phone keeps just one backup.',
+      'On browsers that allow it (like Chrome on a computer), later backups overwrite the same file in one tap.',
+    ],
+  },
   {
     version: '1.8', date: '2026-10-09', items: [
       'Restoring a backup can now merge it with what’s on your phone instead of replacing everything.',
