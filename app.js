@@ -69,7 +69,9 @@ function toast(msg) {
 }
 
 // Persistence: state arrays mirror the IndexedDB stores
+// Every save stamps updatedAt, so merging a backup can tell which copy of a record is newer
 async function save(store, obj) {
+  obj.updatedAt = Date.now();
   const list = state[store];
   const i = list.findIndex(x => x.id === obj.id);
   if (i >= 0) list[i] = obj; else if (store === 'plans') list.push(obj); else list.unshift(obj);
@@ -81,13 +83,14 @@ async function remove(store, id) {
 }
 const pending = new Map();
 function saveLater(store, obj) {
+  obj.updatedAt = Date.now();
   clearTimeout(pending.get(obj.id)?.t);
   pending.set(obj.id, { store, obj, t: setTimeout(() => { pending.delete(obj.id); db.put(store, obj); }, 400) });
 }
 function flushPending() {
   for (const [id, p] of pending) { clearTimeout(p.t); db.put(p.store, p.obj); pending.delete(id); }
 }
-const saveSettings = () => db.put('meta', state.settings);
+const saveSettings = () => { state.settings.updatedAt = Date.now(); return db.put('meta', state.settings); };
 
 // Photos are stored as compressed JPEG blobs
 const photoUrls = new Map();
@@ -225,7 +228,7 @@ function dragGesture(handle, panel, { onDown, onUp } = {}) {
 function openSheet(title, body, actions = [], { onClose } = {}) {
   const head = h('div', { class: 'sheet-head' },
     h('span', { class: 'grabber', 'aria-hidden': 'true' }),
-    h('h2', {}, title), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSheet }, '✕'));
+    h('h2', {}, title), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSheet }, icon('x')));
   const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-label': title },
     head,
     h('div', { class: 'sheet-body' }, body),
@@ -277,7 +280,7 @@ function renderBars() {
       h('span', { class: 'live-dot', 'aria-hidden': 'true' }),
       h('span', { class: 'grow mini-name' }, s.name),
       h('span', { class: 'mini-meta' }, h('span', { 'data-clock': s.startedAt }), total ? ` · ${done}/${total}` : ''),
-      h('span', { class: 'chev', 'aria-hidden': 'true' }, '⌃'));
+      icon('chevronUp', 'chev'));
     dragGesture(bar, bar, { onUp: openSession });
     bars.push(bar);
   }
@@ -287,7 +290,7 @@ function renderBars() {
       icon('edit'),
       h('span', { class: 'grow mini-name' }, `Editing ${d.plan.name || 'new plan'}`),
       h('span', { class: 'mini-meta' }, 'unsaved'),
-      h('span', { class: 'chev', 'aria-hidden': 'true' }, '⌃'));
+      icon('chevronUp', 'chev'));
     dragGesture(bar, bar, { onUp: resumeDraft });
     bars.push(bar);
   }
@@ -352,7 +355,7 @@ function sessionHeader(s) {
       h('button', {
         class: `btn small${showRestChips ? ' on' : ''}`, 'aria-label': 'Quick rest timer', 'aria-expanded': String(showRestChips),
         onclick: () => { showRestChips = !showRestChips; render(); },
-      }, '⏱ Rest')),
+      }, icon('timer'), 'Rest')),
     showRestChips && h('div', { class: 'chip-row rest-chips' }, [30, 60, 90, 120, 180, 240].map(sec =>
       h('button', { class: 'chip', onclick: () => { timer.start(sec); showRestChips = false; render(); } }, fmtTime(sec)))));
 }
@@ -364,7 +367,7 @@ async function finishSession(s, endAt = Date.now()) {
   timer.stop();
   state.sessionOpen = false;
   render();
-  toast('Session saved 💪');
+  toast('Session saved');
   maybeRemindBackup();
 }
 
@@ -488,7 +491,7 @@ function sessionView(s) {
   return h('div', {},
     h('div', { class: 'progress' }, h('div', { style: { width: `${total ? (done / total) * 100 : 0}%` } })),
     h('p', { class: 'muted small', style: { marginTop: '6px' } }, `${done} of ${total} sets done`),
-    h('button', { class: 'btn primary full', onclick: () => climbSheet(null, s.id) }, '📷 Add climb'),
+    h('button', { class: 'btn primary full', onclick: () => climbSheet(null, s.id) }, icon('camera'), 'Add climb'),
     [...sections].map(([name, list]) => [h('h3', { class: 'section-title' }, name), list.map(e => exerciseCard(s, e))]),
     h('button', {
       class: 'btn ghost full',
@@ -528,13 +531,13 @@ function exerciseCard(s, e) {
       h('button', {
         class: 'icon-btn', 'aria-label': 'Add note',
         onclick: () => { openNotes.has(e.id) ? openNotes.delete(e.id) : openNotes.add(e.id); render(); },
-      }, '✎')),
+      }, icon('edit'))),
     e.tip && tipText(e.tip, e.id),
     !hasClimbs && h('div', { class: 'sets' },
       e.done.map((d, i) => h('button', {
         class: `set${d ? ' done' : ''}`, 'aria-label': `Set ${i + 1}${d ? ' done' : ''}`,
         onclick: () => toggleSet(s, e, i),
-      }, d ? '✓' : i + 1)),
+      }, d ? icon('check') : i + 1)),
       h('button', {
         class: 'set add', 'aria-label': 'Add a set',
         onclick: () => addRound(s, e),
@@ -590,11 +593,11 @@ function exerciseClimbs(s, e) {
               save('sessions', s);
               render();
             },
-          }, '✕')),
+          }, icon('x'))),
         h('div', { class: 'sets sm' }, (e.climbDone[c.id] ?? []).map((d, i) => h('button', {
           class: `set${d ? ' done' : ''}`, 'aria-label': `Round ${i + 1}${d ? ' done' : ''}`,
           onclick: () => toggleClimbRound(s, e, c.id, i),
-        }, d ? '✓' : i + 1)))))),
+        }, d ? icon('check') : i + 1)))))),
     h('div', { class: 'card-actions' },
       h('button', { class: 'btn small ghost', onclick: () => attachClimbSheet(s, e) }, '+ Add climb to this'),
       linkedClimbs(e).length ? h('button', { class: 'btn small ghost', onclick: () => addRound(s, e) }, '+ Round') : null));
@@ -634,7 +637,7 @@ function attachClimbSheet(s, e) {
   };
   const recent = state.climbs.filter(c => !e.climbIds?.includes(c.id)).sort((a, b) => b.date - a.date).slice(0, 24);
   openSheet(`Add climb to ${e.name}`, h('div', {},
-    h('button', { class: 'btn primary full', style: { marginTop: 0 }, onclick: () => { closeSheet(); climbSheet(null, s.id, attach); } }, '📷 New climb'),
+    h('button', { class: 'btn primary full', style: { marginTop: 0 }, onclick: () => { closeSheet(); climbSheet(null, s.id, attach); } }, icon('camera'), 'New climb'),
     recent.length ? [
       h('h3', { class: 'section-title' }, 'Or pick one you’ve logged'),
       h('div', { class: 'climb-grid' }, recent.map(c => climbTile(c, () => { closeSheet(); attach(c); }))),
@@ -987,14 +990,14 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         if (fresh) newPhotos.delete(id); else removedPhotos.push(id);
         draw();
       },
-    }, '✕'));
+    }, icon('x')));
   }
 
   function draw() {
     body.replaceChildren(
       h('div', { class: 'photos' },
         c.photoIds.map(photoThumb),
-        h('label', { class: 'photo-add' }, h('span', {}, '📷'), 'Photo or video', fileInput)),
+        h('label', { class: 'photo-add' }, icon('camera'), 'Photo or video', fileInput)),
       state.settings.gyms.length > 1 && h('div', { class: 'field' }, h('span', {}, 'Gym'),
         h('div', { class: 'chip-row' }, state.settings.gyms.map(gym => h('button', {
           class: `chip${c.gymId === gym.id ? ' on' : ''}`,
@@ -1061,7 +1064,7 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         if (running && c.sessionId === running.id) { touch(running); save('sessions', running); }
         closeSheet();
         render();
-        if (!existing) toast(c.status === 'project' ? 'Project saved' : `${STATUS[c.status]}! Nice 🎉`);
+        if (!existing) toast(c.status === 'project' ? 'Project saved' : `${STATUS[c.status]} logged`);
       },
     }, 'Save'),
   ]);
@@ -1166,9 +1169,9 @@ function settingsView() {
             onclick: async () => { state.settings.backupEveryDays = days; await saveSettings(); render(); },
           }, label)))),
       h('label', { class: 'card list-row' },
-        h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore from backup'), h('p', { class: 'muted small' }, 'Replaces everything on this device')),
+        h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Restore from backup'), h('p', { class: 'muted small' }, 'Merge a backup into this phone, or replace everything')),
         h('span', { class: 'chev' }, '›'),
-        h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => importData(e.target.files[0]) }))),
+        h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => { importData(e.target.files[0]); e.target.value = ''; } }))),
     h('h3', { class: 'section-title' }, 'About'),
     settingsRow('About BetaLab', 'Hobby project · no ads, no tracking', aboutSheet),
     settingsRow('What’s new', `Version ${APP_VERSION} · ${fmtDay(CHANGES[0].date)}`, () => whatsNewSheet()),
@@ -1267,9 +1270,9 @@ function planSheet(existing) {
               h('div', { class: 'card-title' }, ex.name),
               h('p', { class: 'muted small' }, [ex.section, repsLabel(ex), ex.rest ? `rest ${fmtTime(ex.rest)}` : null].filter(Boolean).join(' · ')),
               ex.tip && tipText(ex.tip, `plan-${p.id}-${i}`))),
-          h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
-          h('button', { class: 'icon-btn', 'aria-label': 'Move down', disabled: i === p.exercises.length - 1, onclick: () => move(i, 1) }, '↓'),
-          h('button', { class: 'icon-btn', 'aria-label': 'Remove', onclick: () => { p.exercises.splice(i, 1); draw(); } }, '✕')))),
+          h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, icon('arrowUp')),
+          h('button', { class: 'icon-btn', 'aria-label': 'Move down', disabled: i === p.exercises.length - 1, onclick: () => move(i, 1) }, icon('arrowDown')),
+          h('button', { class: 'icon-btn', 'aria-label': 'Remove', onclick: () => { p.exercises.splice(i, 1); draw(); } }, icon('x'))))),
       h('button', { class: 'btn ghost full', onclick: () => exerciseSheet(null, ex => { p.exercises.push(ex); draw(); }) }, '+ Add exercise'));
   }
   draw();
@@ -1389,8 +1392,8 @@ function progressView() {
       h('div', { class: 'pyramid-row', title: `${g.name}: ${sent} sent, ${flash} flashed` },
         h('span', { class: 'name' }, swatch(g.id, '', activeGym().id), g.name),
         h('div', { class: 'track' }, sent ? h('div', { class: 'bar', style: { width: `${(sent / maxSent) * 100}%`, background: g.color } }) : null),
-        h('span', { class: 'count' }, h('strong', {}, sent), flash ? ` (${flash}⚡)` : '')))),
-    h('p', { class: 'muted small', style: { marginTop: '6px' } }, '⚡ = flashed'),
+        h('span', { class: 'count' }, h('strong', {}, sent), flash ? h('span', { class: 'flash-count' }, ` ${flash}`, icon('flash')) : '')))),
+    h('p', { class: 'muted small flash-note' }, icon('flash'), 'shows how many were flashed'),
     h('h3', { class: 'section-title' }, 'Sends per week'),
     h('div', { class: 'card' },
       h('div', { class: 'weeks' }, weeks.map(w =>
@@ -1427,8 +1430,8 @@ function gymSheet(existing) {
       h('div', { style: { marginTop: '10px' } }, grades.map((g, i) => h('div', { class: 'grade-edit' },
         h('input', { type: 'color', value: g.color, 'aria-label': `${g.name} colour`, oninput: e => { g.color = e.target.value; } }),
         h('input', { class: 'input', value: g.name, oninput: e => { g.name = e.target.value; } }),
-        h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
-        h('button', { class: 'icon-btn', 'aria-label': 'Move down', disabled: i === grades.length - 1, onclick: () => move(i, 1) }, '↓'),
+        h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, icon('arrowUp')),
+        h('button', { class: 'icon-btn', 'aria-label': 'Move down', disabled: i === grades.length - 1, onclick: () => move(i, 1) }, icon('arrowDown')),
         h('button', {
           class: 'icon-btn', 'aria-label': 'Remove',
           onclick: () => {
@@ -1436,7 +1439,7 @@ function gymSheet(existing) {
             grades.splice(i, 1);
             draw();
           },
-        }, '✕')))),
+        }, icon('x'))))),
       h('button', { class: 'btn ghost full', onclick: () => { grades.push({ id: uid(), name: 'New', color: '#888888' }); draw(); } }, '+ Add colour'));
   }
   draw();
@@ -1550,15 +1553,90 @@ async function maybeRemindBackup() {
   ]);
 }
 
+const RECORD_STORES = ['plans', 'sessions', 'climbs'];
+
 async function importData(file) {
   if (!file) return;
   let data;
-  try { data = JSON.parse(await file.text()); } catch { toast('That file is not a Beta Lab backup'); return; }
-  if (data?.app !== 'betalab') { toast('That file is not a Beta Lab backup'); return; }
-  if (!confirm(`Restore backup from ${new Date(data.exportedAt).toLocaleString()}? This replaces everything on this device.`)) return;
+  try { data = JSON.parse(await file.text()); } catch { toast('That file isn’t a BetaLab backup'); return; }
+  if (data?.app !== 'betalab') { toast('That file isn’t a BetaLab backup'); return; }
+  flushPending();
+  const plan = planMerge(data);
+  const line = (label, n) => (n ? `${n} ${label}${n === 1 ? '' : 's'}` : null);
+  const adds = [line('plan', plan.add.plans), line('session', plan.add.sessions), line('climb', plan.add.climbs), line('gym', plan.newGyms)].filter(Boolean);
+  openSheet('Restore backup', h('div', { class: 'stack' },
+    h('p', {}, `Backup from ${new Date(data.exportedAt).toLocaleString()}.`),
+    h('div', { class: 'info-point' },
+      h('strong', {}, 'Merge with this phone'),
+      h('p', { class: 'muted small' }, (adds.length ? `Adds ${adds.join(', ')}. ` : 'Nothing new to add. ')
+        + (plan.updates ? `Updates ${plan.updates} with a newer version from the backup. ` : '')
+        + 'Everything else on this phone stays as it is. Things you deleted since this backup will come back.')),
+    h('div', { class: 'info-point' },
+      h('strong', {}, 'Replace everything'),
+      h('p', { class: 'muted small' }, 'Wipes this phone and loads the backup exactly as it was. Anything added or changed since the backup is lost.'))), [
+    h('button', {
+      class: 'btn danger',
+      onclick: async () => {
+        if (!confirm('Replace everything on this phone with the backup?')) return;
+        closeSheet();
+        await replaceWithBackup(data);
+      },
+    }, 'Replace everything'),
+    h('button', { class: 'btn primary', onclick: async () => { closeSheet(); await mergeBackup(data, plan); } }, 'Merge'),
+  ]);
+}
+
+// Work out what a merge would change: new records are added, records in both keep whichever was edited last
+function planMerge(data) {
+  const add = {}, take = {};
+  let updates = 0;
+  for (const store of RECORD_STORES) {
+    const mine = new Map(state[store].map(x => [x.id, x]));
+    add[store] = 0;
+    take[store] = (data[store] ?? []).filter(x => {
+      const cur = mine.get(x.id);
+      if (!cur) { add[store]++; return true; }
+      if ((x.updatedAt ?? 0) > (cur.updatedAt ?? 0)) { updates++; return true; }
+      return false;
+    });
+  }
+  const myGyms = new Set(state.settings.gyms.map(g => g.id));
+  const newGyms = (data.settings?.gyms ?? []).filter(g => !myGyms.has(g.id)).length;
+  return { add, take, updates, newGyms };
+}
+
+async function mergeBackup(data, plan) {
+  toast('Merging…');
+  // A running session from the backup is finished if this phone already has one going
+  const running = activeSession();
+  for (const s of plan.take.sessions) {
+    if (!s.endedAt && running && s.id !== running.id) s.endedAt = Math.max(s.lastActivityAt ?? s.startedAt, s.startedAt);
+  }
+  for (const store of RECORD_STORES) for (const x of plan.take[store]) await db.put(store, x);
+  const myPhotos = new Set((await db.getAll('photos')).map(p => p.id));
+  for (const p of data.photos ?? []) {
+    if (!myPhotos.has(p.id)) await db.put('photos', { id: p.id, blob: await (await fetch(p.data)).blob() });
+  }
+  // Settings: the newer side wins, and gyms from both sides are kept
+  const theirs = data.settings ?? {};
+  migrateGyms(theirs);
+  delete theirs.needsSave;
+  const newer = (theirs.updatedAt ?? 0) > (state.settings.updatedAt ?? 0) ? theirs : state.settings;
+  const older = newer === theirs ? state.settings : theirs;
+  const gyms = [...newer.gyms, ...older.gyms.filter(g => !newer.gyms.some(n => n.id === g.id))];
+  const merged = { ...older, ...newer, gyms, id: 'settings', lastBackupAt: Math.max(theirs.lastBackupAt ?? 0, state.settings.lastBackupAt ?? 0) || undefined };
+  await db.put('meta', merged);
+  photoUrls.clear();
+  await loadAll();
+  render();
+  const added = Object.values(plan.add).reduce((a, b) => a + b, 0) + plan.newGyms;
+  toast(added || plan.updates ? `Merged: ${added} added, ${plan.updates} updated` : 'Already up to date');
+}
+
+async function replaceWithBackup(data) {
   for (const s of db.storeNames) await db.clear(s);
   for (const p of data.photos ?? []) await db.put('photos', { id: p.id, blob: await (await fetch(p.data)).blob() });
-  for (const store of ['plans', 'sessions', 'climbs']) for (const x of data[store] ?? []) await db.put(store, x);
+  for (const store of RECORD_STORES) for (const x of data[store] ?? []) await db.put(store, x);
   await db.put('meta', { ...data.settings, id: 'settings' });
   photoUrls.clear();
   await loadAll();

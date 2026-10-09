@@ -1,7 +1,13 @@
 // Newest first. Bump APP_VERSION (and CACHE in sw.js) with every release; people see the entries they haven't seen yet
-export const APP_VERSION = '1.7';
+export const APP_VERSION = '1.8';
 
 export const CHANGES = [
+  {
+    version: '1.8', date: '2026-10-09', items: [
+      'Restoring a backup can now merge it with what’s on your phone instead of replacing everything.',
+      'Flat icons throughout, replacing the last few emoji.',
+    ],
+  },
   {
     version: '1.7', date: '2026-10-09', items: [
       'New Map tab: add a photo of your gym’s map and pin climbs on it. Pins are coloured by grade, projects have a ring, and climbs close together group into a bubble you can tap.',

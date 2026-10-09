@@ -457,3 +457,18 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
 .map-note { margin-top: 8px; }
 .empty-map { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .page-head .row .btn .icon { width: 16px; height: 16px; }
+
+/* Flat icons in place of emoji */
+.btn .icon { width: 18px; height: 18px; }
+.btn.small .icon { width: 16px; height: 16px; }
+.icon-btn .icon { width: 20px; height: 20px; }
+.icon-btn.sm .icon { width: 16px; height: 16px; }
+.set .icon { width: 20px; height: 20px; }
+.set .icon svg { stroke-width: 2.6; }
+.sets.sm .set .icon { width: 16px; height: 16px; }
+.photo-add .icon { width: 28px; height: 28px; }
+.flash-count { display: inline-flex; align-items: center; gap: 1px; margin-left: 4px; }
+.flash-count .icon, .flash-note .icon { width: 13px; height: 13px; color: var(--accent-text); }
+.flash-note { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.mini-bar .chev.icon { width: 18px; height: 18px; }
+.timer-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }

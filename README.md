@@ -77,13 +77,13 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **Sessions:** full history of finished sessions; tap one for its sets, notes and climbs.
 - **Edit session time:** fix a session's date, start time and length (handy if you forgot to tap Finish, or are logging one afterwards). Edited sessions are marked "edited".
 - **Stats:** sessions this month, total sends, hardest send and open projects.
-- **Sends by grade:** a grade pyramid for the selected gym, with flashes marked ⚡.
+- **Sends by grade:** a grade pyramid for the selected gym, with flashes marked by a lightning icon.
 - **Sends per week** for the last 8 weeks.
 
 ### Settings
 - **Accent colour:** 8 presets or any custom colour.
 - **Gyms:** keep a separate grading for each gym you climb at. Urban Climb and 9 Degrees colours are built in. Add your own gym with its colours (rename, recolour and reorder them) or the V-scale (VB–V10+).
-- **Backups:** **Back up data** saves everything, photos included, to one file, and Settings shows when you last backed up. **Restore from backup** loads a file back in.
+- **Backups:** **Back up data** saves everything, photos included, to one file, and Settings shows when you last backed up. **Restore from backup** merges a file into your phone or replaces everything.
 - **Backup reminders:** after a session, a nudge to back up if it's been longer than 3 days, a week, 2 weeks or a month (or turn it off).
 - **What's new**, **About**, and **How your data is stored**.
 
@@ -119,7 +119,7 @@ On launch, the app asks the browser to mark its storage as **persistent** (`navi
 
 **Android:** the installed app (a WebAPK) uses Chrome's storage for the site, so the Chrome tab and the installed app share the same data. Clearing Chrome's site data for `y3l4h.github.io` deletes it.
 
-**Backups:** after you finish a session, BetaLab reminds you to back up if your last backup is older than the interval you pick in Settings (default: a week). Settings → **Back up data** writes one JSON file containing every record, with photos embedded as base64 `data:` URLs. **Restore from backup** wipes the stores and loads that file back in. It's the only way to move your data to a new phone, so do it now and then and keep the file in iCloud Drive, Google Drive or Files.
+**Backups:** after you finish a session, BetaLab reminds you to back up if your last backup is older than the interval you pick in Settings (default: a week). Settings → **Back up data** writes one JSON file containing every record, with photos embedded as base64 `data:` URLs. **Restore from backup** can **merge** (adds anything missing, and where a record exists on both sides keeps whichever was edited most recently, using an `updatedAt` stamp on every record; gyms from both sides are kept) or **replace everything** (wipes the stores and loads the file exactly). It's the only way to move your data to a new phone, so do it now and then and keep the file in iCloud Drive, Google Drive or Files.
 
 ## For developers
 
