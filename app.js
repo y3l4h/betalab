@@ -1,7 +1,8 @@
 import * as db from './db.js';
 import * as timer from './timer.js';
-import { CLIMB_EXERCISES, DEFAULT_GRADES, SECTIONS, V_SCALE } from './defaults.js';
+import { CLIMB_EXERCISES, GYM_PRESETS, SECTIONS, V_SCALE } from './defaults.js';
 import { TRAINING_TYPES, icon } from './icons.js';
+import { APP_VERSION, CHANGES } from './changelog.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
 const openNotes = new Set();
@@ -35,11 +36,24 @@ const fmtDuration = ms => {
 };
 const toDateInput = ts => { const d = new Date(ts); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 // Grades come from the chosen scale; climbs logged under the other scale still show their own grade
-const activeGrades = () => (state.settings.gradeScale === 'v' ? V_SCALE : state.settings.grades);
-const grade = id => activeGrades().find(g => g.id === id) ?? state.settings.grades.find(g => g.id === id)
-  ?? V_SCALE.find(g => g.id === id) ?? { id, name: '?', color: '#888888' };
+const gymById = id => state.settings.gyms.find(g => g.id === id);
+const activeGym = () => gymById(state.settings.activeGymId) ?? state.settings.gyms[0];
+const gymGrades = gym => (gym?.scale === 'v' ? V_SCALE : gym?.grades ?? []);
+const activeGrades = () => gymGrades(activeGym());
+const grade = (id, gymId) => gymGrades(gymById(gymId)).find(g => g.id === id) ?? activeGrades().find(g => g.id === id)
+  ?? state.settings.gyms.flatMap(gymGrades).find(g => g.id === id) ?? V_SCALE.find(g => g.id === id)
+  ?? { id, name: '?', color: '#888888' };
 const gradeIndex = id => activeGrades().findIndex(g => g.id === id);
-const swatch = (id, cls = '') => h('span', { class: `swatch ${cls}`, style: { background: grade(id).color } });
+const swatch = (id, cls = '', gymId) => h('span', { class: `swatch ${cls}`, style: { background: grade(id, gymId).color } });
+// Climbs remember which gym they were logged at; older climbs, or ones from a deleted gym, count as the first gym
+const climbGymId = c => (gymById(c.gymId) ? c.gymId : state.settings.gyms[0]?.id);
+const climbGrade = c => {
+  const g = grade(c.grade, climbGymId(c));
+  // Fall back to the name and colour saved with the climb (e.g. its gym was deleted)
+  return g.name === '?' && c.gradeName ? { id: c.grade, name: c.gradeName, color: c.gradeColor } : g;
+};
+const climbSwatch = (c, cls = '') => h('span', { class: `swatch ${cls}`, style: { background: climbGrade(c).color } });
+const inActiveGym = c => climbGymId(c) === activeGym()?.id;
 const activeSession = () => state.sessions.find(s => !s.endedAt);
 const repsLabel = e => (e.sets > 1 ? `${e.sets} × ${e.reps || 'sets'}` : e.reps || '1 set');
 const setCounts = s => s.exercises.map(exCounts).reduce((n, c) => [n[0] + c[0], n[1] + c[1]], [0, 0]);
@@ -342,9 +356,9 @@ function sessionHeader(s) {
       h('button', { class: 'chip', onclick: () => { timer.start(sec); showRestChips = false; render(); } }, fmtTime(sec)))));
 }
 
-async function finishSession(s) {
+async function finishSession(s, endAt = Date.now()) {
   flushPending();
-  s.endedAt = Date.now();
+  s.endedAt = Math.max(endAt, s.startedAt);
   await save('sessions', s);
   timer.stop();
   state.sessionOpen = false;
@@ -437,7 +451,9 @@ function trainView() {
 function historyRow(s) {
   const [done, total] = setCounts(s);
   const climbs = state.climbs.filter(c => c.sessionId === s.id).length;
-  const bits = [fmtDate(s.startedAt), fmtDuration(s.endedAt - s.startedAt), total && `${done}/${total} sets`, climbs && `${climbs} climb${climbs > 1 ? 's' : ''}`];
+  const gym = state.settings.gyms.length > 1 && gymById(s.gymId)?.name;
+  const bits = [fmtDate(s.startedAt), fmtDuration(s.endedAt - s.startedAt) + (s.timeEdited ? ' (edited)' : ''), gym,
+    total && `${done}/${total} sets`, climbs && `${climbs} climb${climbs > 1 ? 's' : ''}`];
   return h('button', { class: 'card list-row', onclick: () => sessionSheet(s) },
     h('div', { class: 'grow' },
       h('div', { class: 'card-title' }, s.name),
@@ -452,7 +468,7 @@ async function startSession(plan) {
     return;
   }
   const s = {
-    id: uid(), planId: plan?.id ?? null, name: plan?.name ?? 'Session', startedAt: Date.now(), endedAt: null, notes: '',
+    id: uid(), planId: plan?.id ?? null, name: plan?.name ?? 'Session', startedAt: Date.now(), endedAt: null, notes: '', gymId: activeGym().id,
     exercises: (plan?.exercises ?? []).map(e => ({ ...e, id: uid(), done: Array(e.sets).fill(false), note: '', climbIds: [], climbDone: {} })),
   };
   await save('sessions', s);
@@ -538,7 +554,11 @@ function exCounts(e) {
   return [climbs.reduce((n, c) => n + e.climbDone[c.id].filter(Boolean).length, 0), climbs.length * e.done.length];
 }
 
+// Remember when the session was last used, so a forgotten session can be finished at the right time
+const touch = s => { s.lastActivityAt = Date.now(); };
+
 function addRound(s, e) {
+  touch(s);
   e.done.push(false);
   for (const arr of Object.values(e.climbDone ?? {})) arr.push(false);
   e.sets = e.done.length;
@@ -554,12 +574,12 @@ function syncRounds(e) {
 function exerciseClimbs(s, e) {
   return h('div', { class: 'ex-climbs' },
     linkedClimbs(e).map(c => h('div', { class: 'ex-climb' },
-      h('button', { class: 'ex-climb-thumb', 'aria-label': `Edit ${c.name || grade(c.grade).name}`, onclick: () => climbSheet(c) },
-        c.photoIds?.[0] ? photoImg(c.photoIds[0]) : h('span', { style: { background: grade(c.grade).color } })),
+      h('button', { class: 'ex-climb-thumb', 'aria-label': `Edit ${c.name || climbGrade(c).name}`, onclick: () => climbSheet(c) },
+        c.photoIds?.[0] ? photoImg(c.photoIds[0]) : h('span', { style: { background: climbGrade(c).color } })),
       h('div', { class: 'grow' },
         h('div', { class: 'row tight' },
-          swatch(c.grade),
-          h('strong', { class: 'grow ex-climb-name' }, c.name || grade(c.grade).name),
+          climbSwatch(c),
+          h('strong', { class: 'grow ex-climb-name' }, c.name || climbGrade(c).name),
           h('button', {
             class: 'icon-btn sm', 'aria-label': 'Remove from exercise',
             onclick: () => {
@@ -580,6 +600,7 @@ function exerciseClimbs(s, e) {
 }
 
 function toggleSet(s, e, i) {
+  touch(s);
   const value = !e.done[i];
   for (const c of linkedClimbs(e)) e.climbDone[c.id][i] = value;
   e.done[i] = value;
@@ -589,6 +610,7 @@ function toggleSet(s, e, i) {
 }
 
 function toggleClimbRound(s, e, climbId, i) {
+  touch(s);
   const wasDone = e.done[i];
   e.climbDone[climbId][i] = !e.climbDone[climbId][i];
   syncRounds(e);
@@ -624,16 +646,76 @@ function sessionsSheet() {
     history.length ? history.map(historyRow) : h('p', { class: 'muted' }, 'No finished sessions yet.')));
 }
 
+// If a session has sat untouched for hours, ask whether it's still going rather than letting the clock run on
+const FORGOTTEN_AFTER = 2 * 3600000;
+let forgottenPromptFor = null;
+
+function checkForgottenSession() {
+  const s = activeSession();
+  if (!s || forgottenPromptFor === s.id) return;
+  const last = Math.max(s.lastActivityAt ?? s.startedAt, s.keepGoingAt ?? 0);
+  if (Date.now() - last < FORGOTTEN_AFTER) return;
+  const lastWork = s.lastActivityAt ?? s.startedAt;
+  const at = new Date(lastWork).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const ago = fmtDuration(Date.now() - lastWork);
+  forgottenPromptFor = s.id;
+  openSheet('Still climbing?', h('div', {},
+    h('p', {}, `“${s.name}” is still running. ${s.lastActivityAt ? `Your last set was at ${at}, ${ago} ago.` : `It started at ${at}, ${ago} ago.`}`),
+    h('p', { class: 'muted small', style: { marginTop: '8px' } }, 'Finish it at that time so your session length stays accurate.')), [
+    h('button', {
+      class: 'btn',
+      onclick: async () => { s.keepGoingAt = Date.now(); await save('sessions', s); closeSheet(); },
+    }, 'Keep going'),
+    h('button', { class: 'btn primary', onclick: () => { closeSheet(); finishSession(s, lastWork); } }, `Finish at ${at}`),
+  ], { onClose: () => { forgottenPromptFor = null; } });
+}
+
+const toTimeInput = ts => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+function editSessionTimeSheet(s, onDone) {
+  const mins = Math.max(0, Math.round((s.endedAt - s.startedAt) / 60000));
+  const t = { date: toDateInput(s.startedAt), time: toTimeInput(s.startedAt), hours: Math.floor(mins / 60), minutes: mins % 60 };
+  const num = (label, key, max) => field(label, h('input', {
+    class: 'input', type: 'number', inputmode: 'numeric', min: 0, max, value: t[key],
+    oninput: e => { t[key] = Number(e.target.value) || 0; },
+  }));
+  openSheet('Edit session time', h('div', {},
+    h('p', { class: 'muted small' }, 'For fixing a forgotten Finish, or logging a session after the fact.'),
+    h('div', { class: 'field-row' },
+      field('Date', h('input', { class: 'input', type: 'date', value: t.date, onchange: e => { t.date = e.target.value; } })),
+      field('Start time', h('input', { class: 'input', type: 'time', value: t.time, onchange: e => { t.time = e.target.value; } }))),
+    h('div', { class: 'field-row' }, num('Hours', 'hours', 12), num('Minutes', 'minutes', 59))), [
+    h('button', { class: 'btn', onclick: closeSheet }, 'Cancel'),
+    h('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        const start = new Date(`${t.date}T${t.time || '00:00'}`).getTime();
+        const length = (Math.min(t.hours, 24) * 60 + Math.min(t.minutes, 59)) * 60000;
+        if (!Number.isFinite(start)) { toast('Check the date and time'); return; }
+        if (!length) { toast('A session needs a length'); return; }
+        Object.assign(s, { startedAt: start, endedAt: start + length, timeEdited: true });
+        await save('sessions', s);
+        closeSheet();
+        onDone();
+      },
+    }, 'Save'),
+  ]);
+}
+
 function sessionSheet(s) {
   const climbs = state.climbs.filter(c => c.sessionId === s.id);
+  const reopen = () => { closeSheet(); sessionSheet(s); render(); };
   const body = h('div', {},
-    h('p', { class: 'muted' }, `${fmtDate(s.startedAt)} · ${fmtDuration(s.endedAt - s.startedAt)}`),
+    h('div', { class: 'row' },
+      h('p', { class: 'muted grow' }, `${fmtDate(s.startedAt)} · ${new Date(s.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · ${fmtDuration(s.endedAt - s.startedAt)}`,
+        s.timeEdited ? h('span', { class: 'edited-tag' }, 'edited') : null),
+      h('button', { class: 'btn small', onclick: () => editSessionTimeSheet(s, reopen) }, icon('edit'), 'Edit time')),
     s.exercises.length ? h('h3', { class: 'section-title' }, 'Exercises') : null,
     s.exercises.map(e => h('div', { class: 'card' },
       h('div', { class: 'row' },
         h('div', { class: 'grow card-title' }, e.name),
         h('span', { class: 'muted small' }, exCounts(e).join('/'))),
-      linkedClimbs(e).length ? h('p', { class: 'muted small' }, linkedClimbs(e).map(c => c.name || grade(c.grade).name).join(', ')) : null,
+      linkedClimbs(e).length ? h('p', { class: 'muted small' }, linkedClimbs(e).map(c => c.name || climbGrade(c).name).join(', ')) : null,
       e.note && h('p', { class: 'small', style: { marginTop: '4px' } }, e.note))),
     climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs'), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
     h('h3', { class: 'section-title' }, 'Notes'),
@@ -663,10 +745,11 @@ function climbsView() {
   const f = state.climbFilter;
   const g = state.gradeFilter;
   const list = state.climbs
-    .filter(c => (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!g || c.grade === g))
+    .filter(c => inActiveGym(c) && (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!g || c.grade === g))
     .sort((a, b) => b.date - a.date);
   return h('div', {},
     h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'), h('button', { class: 'btn primary', onclick: () => climbSheet(null) }, '+ Add climb')),
+    gymSwitcher(),
     h('div', { class: 'seg' }, [['all', 'All'], ['project', 'Projects'], ['sent', 'Sent']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.climbFilter = k; render(); } }, label))),
     h('div', { class: 'chip-row' }, activeGrades().map(gr =>
@@ -679,22 +762,40 @@ function climbsView() {
       : h('div', { class: 'empty' }, state.climbs.length ? 'Nothing matches that filter.' : 'No climbs yet. Tap “Add climb” and snap a photo of your first one.'));
 }
 
+// Quick switch between gyms (only shown once there's more than one)
+function gymSwitcher() {
+  const gyms = state.settings.gyms;
+  if (gyms.length < 2) return null;
+  return h('div', { class: 'chip-row gym-row' }, gyms.map(gym => h('button', {
+    class: `chip${gym.id === activeGym().id ? ' on' : ''}`,
+    onclick: () => setActiveGym(gym.id),
+  }, icon('climb'), gym.name)));
+}
+
+async function setActiveGym(id) {
+  state.settings.activeGymId = id;
+  state.gradeFilter = null;
+  await saveSettings();
+  render();
+}
+
 function climbTile(c, onClick = () => climbSheet(c)) {
   const meta = [fmtDate(c.date), c.status !== 'flash' && c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'}` : null];
   return h('button', { class: 'climb-tile', onclick: onClick },
-    c.photoIds?.[0] ? photoImg(c.photoIds[0], 'tile-img') : h('div', { class: 'tile-img placeholder', style: { background: grade(c.grade).color } }),
+    c.photoIds?.[0] ? photoImg(c.photoIds[0], 'tile-img') : h('div', { class: 'tile-img placeholder', style: { background: climbGrade(c).color } }),
     h('div', { class: 'tile-meta' },
-      h('div', { class: 'row tight' }, swatch(c.grade), h('strong', {}, c.name || grade(c.grade).name)),
+      h('div', { class: 'row tight' }, climbSwatch(c), h('strong', {}, c.name || climbGrade(c).name)),
       h('span', { class: `badge ${c.status}` }, STATUS[c.status]),
       h('span', { class: 'muted small' }, meta.filter(Boolean).join(' · '))));
 }
 
 function climbSheet(existing, sessionId = null, onSaved = null) {
-  const lastGrade = [...state.climbs].sort((a, b) => b.date - a.date)[0]?.grade;
+  const lastGrade = [...state.climbs].filter(inActiveGym).sort((a, b) => b.date - a.date)[0]?.grade;
   const c = existing ? structuredClone(existing) : {
     id: uid(), date: Date.now(), grade: (gradeIndex(lastGrade) >= 0 ? lastGrade : null) ?? activeGrades()[0]?.id, name: '', status: 'project',
-    attempts: 1, notes: '', photoIds: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null,
+    attempts: 1, notes: '', photoIds: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null, gymId: activeGym().id,
   };
+  c.gymId ??= climbGymId(c);
   const newPhotos = new Map();
   const removedPhotos = [];
   const body = h('div');
@@ -742,10 +843,20 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
       h('div', { class: 'photos' },
         c.photoIds.map(photoThumb),
         h('label', { class: 'photo-add' }, h('span', {}, '📷'), 'Photo or video', fileInput)),
-      h('div', { class: 'field' }, h('span', {}, state.settings.gradeScale === 'v' ? 'Grade' : 'Colour'),
-        h('div', { class: 'grade-picker' }, activeGrades().map(g =>
+      state.settings.gyms.length > 1 && h('div', { class: 'field' }, h('span', {}, 'Gym'),
+        h('div', { class: 'chip-row' }, state.settings.gyms.map(gym => h('button', {
+          class: `chip${c.gymId === gym.id ? ' on' : ''}`,
+          onclick: () => {
+            c.gymId = gym.id;
+            const grades = gymGrades(gym);
+            if (!grades.some(g => g.id === c.grade)) c.grade = grades[0]?.id;
+            draw();
+          },
+        }, gym.name)))),
+      h('div', { class: 'field' }, h('span', {}, gymById(c.gymId)?.scale === 'v' ? 'Grade' : 'Colour'),
+        h('div', { class: 'grade-picker' }, gymGrades(gymById(c.gymId)).map(g =>
           h('button', { class: `grade-opt${c.grade === g.id ? ' on' : ''}`, onclick: () => { c.grade = g.id; draw(); } },
-            swatch(g.id, 'lg'), g.name)))),
+            swatch(g.id, 'lg', c.gymId), g.name)))),
       field('Name or wall (optional)', h('input', {
         class: 'input', value: c.name, placeholder: 'e.g. Cave overhang, the pinchy one',
         oninput: e => { c.name = e.target.value; },
@@ -788,8 +899,12 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
           photoUrls.set(id, Promise.resolve(p.url));
         }
         for (const id of removedPhotos) { await db.del('photos', id); photoUrls.delete(id); }
+        const g = grade(c.grade, c.gymId);
+        Object.assign(c, { gradeName: g.name, gradeColor: g.color });
         await save('climbs', c);
         onSaved?.(c);
+        const running = activeSession();
+        if (running && c.sessionId === running.id) { touch(running); save('sessions', running); }
         closeSheet();
         render();
         if (!existing) toast(c.status === 'project' ? 'Project saved' : `${STATUS[c.status]}! Nice 🎉`);
@@ -870,18 +985,21 @@ function settingsView() {
           h('span', { class: 'custom', style: isPreset ? null : { background: current } }, isPreset ? '+' : ''),
           'Custom',
           h('input', { type: 'color', value: current, class: 'visually-hidden', onchange: e => setAccent(e.target.value) })))),
-    h('h3', { class: 'section-title' }, 'Climbing'),
-    h('div', { class: 'card' },
-      h('div', { class: 'card-title' }, 'Grading'),
-      h('p', { class: 'muted small' }, 'How your gym grades its problems. Climbs keep the grade they were logged with.'),
-      h('div', { class: 'seg', style: { marginTop: '10px', marginBottom: 0 } }, [['colours', 'Gym colours'], ['v', 'V-scale']].map(([id, label]) =>
-        h('button', {
-          class: (state.settings.gradeScale ?? 'colours') === id ? 'on' : '',
-          onclick: async () => { state.settings.gradeScale = id; state.gradeFilter = null; await saveSettings(); render(); },
-        }, label)))),
-    state.settings.gradeScale === 'v'
-      ? h('p', { class: 'muted small', style: { margin: '8px 2px 0' } }, V_SCALE.map(g => g.name).join(' → '))
-      : settingsRow('Edit gym colours', state.settings.grades.map(g => g.name).join(' → '), gradesSheet),
+    h('div', { class: 'section-row' },
+      h('h3', { class: 'section-title' }, 'Gyms'),
+      h('button', { class: 'btn small ghost', onclick: () => gymSheet(null) }, '+ Add gym')),
+    h('p', { class: 'muted small', style: { margin: '0 2px 10px' } }, 'Tap a gym to make it your current one. Each gym has its own grades, and climbs remember where they were logged.'),
+    h('div', { class: 'stack' }, state.settings.gyms.map(gym => {
+      const on = gym.id === activeGym().id;
+      return h('div', { class: `card gym-card${on ? ' on' : ''}` },
+        h('button', { class: 'gym-main', 'aria-pressed': String(on), onclick: () => setActiveGym(gym.id) },
+          h('span', { class: 'radio', 'aria-hidden': 'true' }),
+          h('div', { class: 'grow' },
+            h('div', { class: 'card-title' }, gym.name),
+            h('div', { class: 'gym-dots' }, gymGrades(gym).map(g => h('span', { class: 'swatch', title: g.name, style: { background: g.color } })),
+              gym.scale === 'v' ? h('span', { class: 'muted small' }, 'V-scale') : null))),
+        h('button', { class: 'icon-btn', 'aria-label': `Edit ${gym.name}`, onclick: () => gymSheet(gym) }, icon('edit')));
+    })),
     h('h3', { class: 'section-title' }, 'Your data'),
     h('div', { class: 'stack' },
       settingsRow('Back up data', `${lastBackupText()} · saves everything, photos included`, exportData),
@@ -899,6 +1017,7 @@ function settingsView() {
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => importData(e.target.files[0]) }))),
     h('h3', { class: 'section-title' }, 'About'),
     settingsRow('About BetaLab', 'Hobby project · no ads, no tracking', aboutSheet),
+    settingsRow('What’s new', `Version ${APP_VERSION} · ${fmtDay(CHANGES[0].date)}`, () => whatsNewSheet()),
     h('button', { class: 'data-note', onclick: dataInfoSheet }, 'Your data stays on this device', icon('info')));
 }
 
@@ -1071,11 +1190,14 @@ function progressView() {
   const sends = state.climbs.filter(c => c.status !== 'project');
   const done = state.sessions.filter(s => s.endedAt);
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-  const hardest = sends.reduce((best, c) => (gradeIndex(c.grade) > gradeIndex(best?.grade) ? c : best), null);
+  // Grades only compare within a gym, so the grade stats follow the selected gym; totals cover every gym
+  const gymSends = sends.filter(inActiveGym);
+  const hardest = gymSends.reduce((best, c) => (gradeIndex(c.grade) > gradeIndex(best?.grade) ? c : best), null);
   const grades = activeGrades();
   const perGrade = grades.map(g => ({
-    g, sent: sends.filter(c => c.grade === g.id).length, flash: sends.filter(c => c.grade === g.id && c.status === 'flash').length,
+    g, sent: gymSends.filter(c => c.grade === g.id).length, flash: gymSends.filter(c => c.grade === g.id && c.status === 'flash').length,
   }));
+  const multiGym = state.settings.gyms.length > 1;
   const maxSent = Math.max(1, ...perGrade.map(x => x.sent));
 
   const thisWeek = weekStart(Date.now());
@@ -1105,12 +1227,13 @@ function progressView() {
     h('div', { class: 'tiles' },
       tile('Sessions this month', done.filter(s => s.startedAt >= monthStart.getTime()).length),
       tile('Total sends', sends.length),
-      tile('Hardest send', hardest ? [swatch(hardest.grade, 'lg'), grade(hardest.grade).name] : '—'),
+      tile(multiGym ? `Hardest at ${activeGym().name}` : 'Hardest send', hardest ? [climbSwatch(hardest, 'lg'), climbGrade(hardest).name] : '—'),
       tile('Open projects', state.climbs.filter(c => c.status === 'project').length)),
-    h('h3', { class: 'section-title' }, 'Sends by colour'),
+    h('h3', { class: 'section-title' }, multiGym ? `Sends by grade · ${activeGym().name}` : 'Sends by grade'),
+    gymSwitcher(),
     h('div', { class: 'card' }, [...perGrade].reverse().map(({ g, sent, flash }) =>
       h('div', { class: 'pyramid-row', title: `${g.name}: ${sent} sent, ${flash} flashed` },
-        h('span', { class: 'name' }, swatch(g.id), g.name),
+        h('span', { class: 'name' }, swatch(g.id, '', activeGym().id), g.name),
         h('div', { class: 'track' }, sent ? h('div', { class: 'bar', style: { width: `${(sent / maxSent) * 100}%`, background: g.color } }) : null),
         h('span', { class: 'count' }, h('strong', {}, sent), flash ? ` (${flash}⚡)` : '')))),
     h('p', { class: 'muted small', style: { marginTop: '6px' } }, '⚡ = flashed'),
@@ -1124,14 +1247,30 @@ function progressView() {
         h('span', {}, i === 7 ? 'Now' : new Date(w.start).toLocaleDateString(undefined, { day: 'numeric', month: 'numeric' }))))));
 }
 
-function gradesSheet() {
-  const grades = structuredClone(state.settings.grades);
+function gymSheet(existing) {
+  const gym = existing ? structuredClone(existing) : { id: uid(), name: '', scale: 'colours', grades: [] };
+  const grades = gym.grades ?? [];
   const body = h('div');
   const move = (i, d) => { const [x] = grades.splice(i, 1); grades.splice(i + d, 0, x); draw(); };
+  const usedHere = g => state.climbs.some(c => c.grade === g.id && climbGymId(c) === gym.id);
   function draw() {
     body.replaceChildren(
-      h('p', { class: 'muted small' }, 'Easiest at the top, hardest at the bottom.'),
-      h('div', { style: { marginTop: '12px' } }, grades.map((g, i) => h('div', { class: 'grade-edit' },
+      field('Gym name', h('input', { class: 'input', value: gym.name, placeholder: 'e.g. Urban Climb Collingwood', oninput: e => { gym.name = e.target.value; } })),
+      h('div', { class: 'field' }, h('span', {}, 'Grading'),
+        h('div', { class: 'seg', style: { marginBottom: 0 } }, [['colours', 'Colours'], ['v', 'V-scale']].map(([id, label]) =>
+          h('button', { class: gym.scale === id ? 'on' : '', onclick: () => { gym.scale = id; draw(); } }, label)))),
+      gym.scale === 'v'
+        ? h('p', { class: 'muted small', style: { marginTop: '10px' } }, V_SCALE.map(g => g.name).join(' → '))
+        : gradeEditor());
+  }
+  function gradeEditor() {
+    return h('div', {},
+      !existing && h('div', { class: 'field' }, h('span', {}, 'Start from'),
+        h('div', { class: 'chip-row' }, GYM_PRESETS.map(p => h('button', {
+          class: 'chip', onclick: () => { grades.splice(0, grades.length, ...structuredClone(p.grades)); draw(); },
+        }, `${p.name} colours`)))),
+      h('p', { class: 'muted small', style: { marginTop: '14px' } }, 'Colours from easiest (top) to hardest (bottom).'),
+      h('div', { style: { marginTop: '10px' } }, grades.map((g, i) => h('div', { class: 'grade-edit' },
         h('input', { type: 'color', value: g.color, 'aria-label': `${g.name} colour`, oninput: e => { g.color = e.target.value; } }),
         h('input', { class: 'input', value: g.name, oninput: e => { g.name = e.target.value; } }),
         h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
@@ -1139,7 +1278,7 @@ function gradesSheet() {
         h('button', {
           class: 'icon-btn', 'aria-label': 'Remove',
           onclick: () => {
-            if (state.climbs.some(c => c.grade === g.id) && !confirm(`Some climbs use ${g.name}. Remove it anyway?`)) return;
+            if (usedHere(g) && !confirm(`Some climbs at this gym use ${g.name}. Remove it anyway?`)) return;
             grades.splice(i, 1);
             draw();
           },
@@ -1147,17 +1286,36 @@ function gradesSheet() {
       h('button', { class: 'btn ghost full', onclick: () => { grades.push({ id: uid(), name: 'New', color: '#888888' }); draw(); } }, '+ Add colour'));
   }
   draw();
-  openSheet('Grade colours', body, [
-    h('button', { class: 'btn', onclick: () => { grades.splice(0, grades.length, ...structuredClone(DEFAULT_GRADES)); draw(); } }, 'Reset'),
-    h('button', {
-      class: 'btn primary',
+
+  const others = state.settings.gyms.filter(g => g.id !== gym.id);
+  openSheet(existing ? 'Edit gym' : 'Add gym', body, [
+    existing && others.length && h('button', {
+      class: 'btn danger',
       onclick: async () => {
-        state.settings.grades = grades.filter(g => g.name.trim());
+        const count = state.climbs.filter(c => climbGymId(c) === gym.id).length;
+        const moveTo = gym.id === state.settings.gyms[0].id ? others[0] : state.settings.gyms[0];
+        if (!confirm(`Delete ${gym.name}?${count ? ` Your ${count} climb${count > 1 ? 's' : ''} logged there will show under ${moveTo.name}.` : ''}`)) return;
+        state.settings.gyms = others;
+        if (state.settings.activeGymId === gym.id) state.settings.activeGymId = others[0].id;
         await saveSettings();
         closeSheet();
         render();
       },
-    }, 'Save'),
+    }, 'Delete'),
+    h('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        if (!gym.name.trim()) { toast('Give the gym a name'); return; }
+        gym.grades = grades.filter(g => g.name.trim());
+        if (gym.scale === 'colours' && !gym.grades.length) { toast('Add at least one colour'); return; }
+        const i = state.settings.gyms.findIndex(g => g.id === gym.id);
+        if (i >= 0) state.settings.gyms[i] = gym; else state.settings.gyms.push(gym);
+        if (!existing) state.settings.activeGymId = gym.id;
+        await saveSettings();
+        closeSheet();
+        render();
+      },
+    }, existing ? 'Save' : 'Add gym'),
   ]);
 }
 
@@ -1253,6 +1411,61 @@ async function importData(file) {
   render();
 }
 
+// What's new: show the changes someone hasn't seen yet, once, after an update
+const SEEN_KEY = 'betalab.seenVersion';
+const fmtDay = iso => new Date(`${iso}T12:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+
+function whatsNewSheet(changes = CHANGES, title = 'What’s new') {
+  openSheet(title, h('div', { class: 'stack' }, changes.map(c => h('div', { class: 'info-point' },
+    h('strong', {}, `Version ${c.version}`), h('span', { class: 'muted small' }, ` · ${fmtDay(c.date)}`),
+    h('ul', { class: 'change-list' }, c.items.map(item => h('li', {}, item)))))));
+}
+
+function maybeShowWhatsNew() {
+  let seen = null;
+  try { seen = localStorage.getItem(SEEN_KEY); } catch {}
+  try { localStorage.setItem(SEEN_KEY, APP_VERSION); } catch {}
+  if (seen === APP_VERSION) return;
+  // Brand-new users don't need release notes; people who already have data do
+  const hasData = state.plans.length || state.sessions.length || state.climbs.length;
+  if (!seen && !hasData) return;
+  const i = seen ? CHANGES.findIndex(c => c.version === seen) : 1;
+  const unseen = CHANGES.slice(0, i < 0 ? CHANGES.length : Math.max(i, 1));
+  whatsNewSheet(unseen, 'BetaLab was updated');
+}
+
+// A new version finished downloading in the background: offer a reload instead of waiting for the next launch
+function watchForUpdates() {
+  if (!('serviceWorker' in navigator) || location.hostname === 'localhost') return;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  });
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || document.getElementById('update-banner')) return;
+    document.body.append(h('div', { id: 'update-banner', class: 'update-banner', role: 'status' },
+      h('span', {}, 'A new version of BetaLab is ready'),
+      h('button', { class: 'btn small primary', onclick: () => location.reload() }, 'Update')));
+  });
+}
+
+// Settings from before gyms existed had one colour list (and maybe the V-scale switch): turn that into gyms
+function migrateGyms(settings) {
+  if (settings.gyms) return;
+  const presets = structuredClone(GYM_PRESETS);
+  if (settings.grades) presets[0].grades = settings.grades;
+  settings.gyms = presets;
+  settings.activeGymId = presets[0].id;
+  if (settings.gradeScale === 'v') {
+    const vGym = { id: uid(), name: 'V-scale gym', scale: 'v' };
+    settings.gyms.push(vGym);
+    settings.activeGymId = vGym.id;
+  }
+  delete settings.grades;
+  delete settings.gradeScale;
+  settings.needsSave = true;
+}
+
 async function loadAll() {
   const [plans, sessions, climbs, settings] = await Promise.all([
     db.getAll('plans'), db.getAll('sessions'), db.getAll('climbs'), db.get('meta', 'settings'),
@@ -1260,7 +1473,9 @@ async function loadAll() {
   state.plans = plans.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
   state.sessions = sessions;
   state.climbs = climbs;
-  state.settings = settings ?? { id: 'settings', grades: structuredClone(DEFAULT_GRADES) };
+  state.settings = settings ?? { id: 'settings' };
+  migrateGyms(state.settings);
+  if (state.settings.needsSave) { delete state.settings.needsSave; await saveSettings(); }
   applyAccent();
 }
 
@@ -1282,11 +1497,15 @@ async function init() {
   document.querySelectorAll('.tabbar button').forEach(b => {
     b.onclick = () => { state.tab = b.dataset.tab; render(); };
   });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { flushPending(); persistDraft(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { flushPending(); persistDraft(); } else checkForgottenSession();
+  });
   timer.init();
   setInterval(tickClocks, 1000);
   render();
-  if ('serviceWorker' in navigator && location.hostname !== 'localhost') navigator.serviceWorker.register('sw.js');
+  maybeShowWhatsNew();
+  checkForgottenSession();
+  watchForUpdates();
 }
 
 init();

@@ -404,3 +404,26 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
   box-shadow: 0 6px 20px rgba(0, 0, 0, .2); max-width: calc(100% - 32px);
 }
 .toast[hidden] { display: none; }
+
+/* Gyms */
+.gym-row { margin-bottom: 6px; }
+.gym-row .chip .icon { width: 16px; height: 16px; }
+.gym-card { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
+.gym-card.on { border-color: var(--accent); }
+.gym-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: none; text-align: left; }
+.radio { width: 22px; height: 22px; flex: none; border-radius: 50%; border: 2px solid var(--border); }
+.gym-card.on .radio { border: 7px solid var(--accent); }
+.gym-dots { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
+.gym-dots .swatch { width: 12px; height: 12px; }
+
+/* Session time edits and updates */
+.edited-tag { margin-left: 6px; padding: 1px 6px; border-radius: 99px; background: var(--surface-2); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.change-list { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+.change-list li + li { margin-top: 4px; }
+.update-banner {
+  position: fixed; left: 12px; right: 12px; margin: 0 auto; max-width: 616px; z-index: 60;
+  top: calc(env(safe-area-inset-top) + 10px);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 10px 10px 16px;
+  border-radius: 16px; background: var(--text); color: var(--bg); font-weight: 600; font-size: 15px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .25); animation: up .2s ease-out;
+}
