@@ -22,7 +22,7 @@ Open the link above on your phone, then:
 3. Tap **Install app** or **Add to Home screen**, then **Install**. Chrome may also show an install banner by itself.
 4. Open BetaLab from the new icon on your home screen or in your app drawer.
 
-Once installed, it opens full-screen like a normal app and works offline at the gym. Send the same link to friends; everyone gets their own empty, private copy. When there's an update, BetaLab shows a short "What's new" note the next time you open it.
+Once installed, it opens full-screen like a normal app and works offline at the gym. Send the same link to friends; everyone gets their own empty, private copy. Your version number is in **Settings**, so you can check you're on the latest one.
 
 ## About
 
@@ -58,20 +58,23 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **Discard session** if you started one by mistake.
 
 ### Climbs
-- **Log a climb** with its gym, grade, name or wall, status (**Project / Sent / Flash**), number of attempts, date and beta notes.
+- **Log a climb** with its gym, wall, grade, an optional name, status (**Project / Sent / Flash**), number of attempts, date and beta notes. Attempts start as "–" (not sure), so you never have to claim a single go.
 - **Photos:** take one or pick from your gallery. Photos are shrunk to save space.
 - **Videos:** pick a video and BetaLab saves a still frame from it as the photo. The video itself stays in your gallery.
 - **Gyms:** switch between your gyms at the top of the page. Each gym shows its own climbs and grades.
 - **Pin on map:** place the climb on your gym's map (see Map below).
 - **▶ Session:** start a climbing session without a plan; climbs you add while it runs are saved to it.
-- **Filter** by All / Projects / Sent and by grade.
+- **Grouped by wall:** once your gym's walls are set up (in the Map tab), climbs are listed under each wall.
+- **Status at a glance:** each climb shows a label on its photo: **Flash** (lightning, accent colour), **Sent** (tick, green) or **Project** (flag, outlined).
+- **Filter** by All / Projects / Sent and by **one or more grades**.
 
 ### Map
 - **Your gym's map:** add a photo of the gym's floor plan or wall map (or a screenshot from their website), one per gym.
+- **Walls:** name each gym's walls (Cave, Slab…). They become the Wall dropdown when logging a climb, and the Climbs page groups climbs by wall.
 - **Pinned climbs** show as dots coloured by grade, and projects have a ring. Tap a dot to open the climb.
 - **Bubbles:** climbs close together group into a numbered bubble. Tap it to see all of them, or zoom in to split it up.
 - **Zoom and pan:** pinch, double-tap or use the + / − buttons, and drag to move around.
-- **Filters:** Recent (last 6 weeks, so old reset problems drop off), Projects or All time, plus grade.
+- **Filters:** Recent (last 6 weeks, so old reset problems drop off), Projects or All time, plus one or more grades.
 
 ### Progress
 - **Sessions:** full history of finished sessions; tap one for its sets, notes and climbs.
@@ -85,12 +88,12 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **Gyms:** keep a separate grading for each gym you climb at. Urban Climb and 9 Degrees colours are built in. Add your own gym with its colours (rename, recolour and reorder them) or the V-scale (VB–V10+).
 - **Backups:** **Back up data** saves everything, photos included, to one file, and Settings shows when you last backed up. **Restore from backup** merges a file into your phone or replaces everything.
 - **Backup reminders:** after a session, a nudge to back up if it's been longer than 3 days, a week, 2 weeks or a month (or turn it off).
-- **What's new**, **About**, and **How your data is stored**.
+- **Version** (tap to check for updates), **About**, and **How your data is stored**.
 
 ### Works like an app
 - **Install** to your home screen on iPhone and Android, opening full-screen.
 - **Works offline** at the gym.
-- **Update notices:** a banner when a new version is ready, and a "What's new" note after updating.
+- **Update notices:** a banner when a new version is ready to load.
 - **Gestures:** swipe pop-ups down to close them, long-press plan cards.
 - **Android back button:** closes the top pop-up, then minimises a session or plan edit.
 - **Light and dark mode** follow your phone's setting.
@@ -110,7 +113,7 @@ Once it's on your phone, data lives in your browser's storage for the `y3l4h.git
 |---|---|---|
 | Plans, sessions, climbs, settings and gyms | **IndexedDB** database `betalab` | Object stores `plans`, `sessions`, `climbs`, `meta`. Plain JSON-like records, saved as you go. |
 | Photos | IndexedDB store `photos` | When you add a photo (or pick a video), it's drawn onto a canvas, shrunk so the long edge is at most 1600 px, and re-encoded as JPEG (quality 0.82, usually 0.2–0.5 MB). The JPEG is stored as a binary `Blob`. Your original photo or video is never touched or copied anywhere else. |
-| Rest timer, unsaved plan edits, last version seen | **localStorage** keys `betalab.timer`, `betalab.planDraft`, `betalab.seenVersion` | Small values, so a running timer or a half-edited plan survives the app being closed, and "What's new" only shows changes you haven't seen. |
+| Rest timer, unsaved plan edits | **localStorage** keys `betalab.timer`, `betalab.planDraft` | Small values, so a running timer or a half-edited plan survives the app being closed. |
 | The app itself, for offline use | **Cache Storage** (`betalab-vN`), via a service worker | Only the app's own files; no personal data. |
 
 On launch, the app asks the browser to mark its storage as **persistent** (`navigator.storage.persist()`), so the browser doesn't evict it when space runs low.
@@ -136,7 +139,7 @@ Then open http://localhost:5180.
 **Shipping an update**
 
 1. Bump `CACHE` in `sw.js` (e.g. `betalab-v13`) so phones download the new files.
-2. Bump `APP_VERSION` in `changelog.js` and add a plain-English entry at the top of `CHANGES`. That's what people see in "What's new".
+2. Bump `APP_VERSION` in `version.js`. It shows in Settings so people can compare versions. Release notes live in the git history.
 3. If you add a new JavaScript file, also add it to `ASSETS` in `sw.js` so it works offline.
 
 Phones pick up the update in the background and show an **Update** banner, or get it the next time the app is opened.

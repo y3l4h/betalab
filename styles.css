@@ -40,7 +40,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
 body {
   margin: 0;
   background: var(--bg);
@@ -227,7 +227,7 @@ textarea.input { resize: vertical; min-height: 80px; }
 .tile-img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; display: block; background: var(--surface-2); }
 .tile-img.placeholder { aspect-ratio: 4 / 3; opacity: .35; }
 .tile-meta { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.tile-meta strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-meta strong { overflow-wrap: anywhere; }
 .badge { align-self: flex-start; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
 .badge.sent { background: var(--accent-soft); color: var(--accent-text); }
 .badge.flash { background: var(--accent); color: var(--accent-ink); }
@@ -472,3 +472,45 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
 .flash-note { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 .mini-bar .chev.icon { width: 18px; height: 18px; }
 .timer-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+/* Climb tiles: status on the photo, name on top (up to two lines), grade and wall underneath */
+.tile-media { position: relative; }
+.tile-name { font-size: 15px; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.tile-sub { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); min-width: 0; }
+.tile-sub .swatch { width: 11px; height: 11px; }
+.tile-date { font-size: 12px; color: var(--muted); }
+.status-badge {
+  position: absolute; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 9px 4px 7px; border-radius: 99px; font-size: 12px; font-weight: 750; letter-spacing: .02em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+}
+.status-badge .icon { width: 14px; height: 14px; }
+.status-badge .icon svg { stroke-width: 2.4; }
+.status-badge.flash { background: var(--accent); color: var(--accent-ink); }
+.status-badge.sent { background: #16a34a; color: #fff; }
+.status-badge.project { background: rgba(15, 17, 21, .78); color: #fff; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .85), 0 2px 8px rgba(0, 0, 0, .3); }
+.climb-tile.status-project { border-style: dashed; }
+.climb-tile.status-flash { border-color: var(--accent); }
+.status-opt { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.status-opt .icon { width: 15px; height: 15px; }
+.status-opt.on.flash { background: var(--accent); color: var(--accent-ink); }
+.status-opt.on.sent { background: #16a34a; color: #fff; }
+.wall-title { display: flex; align-items: center; gap: 8px; }
+.wall-count { font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 99px; background: var(--surface-2); color: var(--muted); letter-spacing: 0; }
+.walls-prompt { margin: 2px 0 8px; }
+.walls-prompt > .icon { color: var(--accent-text); }
+
+/* Map tab: a fixed screen, with the map filling the space between the filters and the tabs */
+body.on-map { overflow: hidden; }
+body.on-map main {
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px + var(--bars, 0) * 60px);
+}
+body.on-map.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 96px + var(--bars, 0) * 60px); }
+body.on-map main > div { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+body.on-map .map-wrap { flex: 1; min-height: 160px; }
+body.on-map main .map-stage { height: 100%; }
+body.on-map .map-note { flex: none; }
+
+/* Keep the tab bar pinned even while the page scrolls or rubber-bands */
+.tabbar { transform: translateZ(0); }

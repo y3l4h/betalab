@@ -2,7 +2,7 @@ import * as db from './db.js';
 import * as timer from './timer.js';
 import { CLIMB_EXERCISES, GYM_PRESETS, SECTIONS, V_SCALE } from './defaults.js';
 import { TRAINING_TYPES, icon } from './icons.js';
-import { APP_VERSION, CHANGES } from './changelog.js';
+import { APP_VERSION } from './version.js';
 import { createMapViewer } from './map.js';
 
 const state = { tab: 'train', plans: [], sessions: [], climbs: [], settings: null, climbFilter: 'all', gradeFilter: null };
@@ -261,6 +261,7 @@ function render() {
   const views = { train: trainView, climbs: climbsView, progress: progressView, map: mapView, settings: settingsView };
   main.replaceChildren(views[state.tab]());
   main.dataset.tab = state.tab;
+  document.body.classList.toggle('on-map', state.tab === 'map' && !!activeGym()?.map);
   window.scrollTo(0, same ? y : 0);
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === state.tab));
   renderSession();
@@ -747,10 +748,17 @@ function sessionSheet(s) {
 // Climbs tab
 function climbsView() {
   const f = state.climbFilter;
-  const g = state.gradeFilter;
+  const picked = (state.gradeFilters ??= new Set());
+  const walls = activeGym().walls ?? [];
   const list = state.climbs
-    .filter(c => inActiveGym(c) && (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!g || c.grade === g))
+    .filter(c => inActiveGym(c) && (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!picked.size || picked.has(c.grade)))
     .sort((a, b) => b.date - a.date);
+  const grid = items => h('div', { class: 'climb-grid' }, items.map(c => climbTile(c)));
+  // With walls set up, climbs are grouped under each wall (in the gym's wall order), then "No wall"
+  const groups = walls.length
+    ? [...walls.map(w => ({ name: w.name, items: list.filter(c => c.wallId === w.id) })),
+      { name: 'No wall', items: list.filter(c => !walls.some(w => w.id === c.wallId)) }].filter(gr => gr.items.length)
+    : [{ name: null, items: list }];
   return h('div', {},
     h('header', { class: 'page-head' }, h('h1', {}, 'Climbs'),
       h('div', { class: 'row' },
@@ -759,13 +767,16 @@ function climbsView() {
     gymSwitcher(),
     h('div', { class: 'seg' }, [['all', 'All'], ['project', 'Projects'], ['sent', 'Sent']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.climbFilter = k; render(); } }, label))),
-    h('div', { class: 'chip-row' }, activeGrades().map(gr =>
-      h('button', {
-        class: `chip${g === gr.id ? ' on' : ''}`,
-        onclick: () => { state.gradeFilter = g === gr.id ? null : gr.id; render(); },
+    h('div', { class: 'chip-row' },
+      picked.size ? h('button', { class: 'chip', onclick: () => { picked.clear(); render(); } }, icon('x'), 'Clear') : null,
+      activeGrades().map(gr => h('button', {
+        class: `chip${picked.has(gr.id) ? ' on' : ''}`, 'aria-pressed': String(picked.has(gr.id)),
+        onclick: () => { picked.has(gr.id) ? picked.delete(gr.id) : picked.add(gr.id); render(); },
       }, swatch(gr.id), gr.name))),
     list.length
-      ? h('div', { class: 'climb-grid', style: { marginTop: '8px' } }, list.map(c => climbTile(c)))
+      ? groups.map(gr => [
+        gr.name && h('h3', { class: 'section-title wall-title' }, gr.name, h('span', { class: 'wall-count' }, gr.items.length)),
+        grid(gr.items)])
       : h('div', { class: 'empty' }, state.climbs.length ? 'Nothing matches that filter.' : 'No climbs yet. Tap “Add climb” and snap a photo of your first one.'));
 }
 
@@ -781,7 +792,8 @@ function gymSwitcher() {
 
 async function setActiveGym(id) {
   state.settings.activeGymId = id;
-  state.gradeFilter = null;
+  state.gradeFilters = new Set();
+  state.mapGrades = new Set();
   await saveSettings();
   render();
 }
@@ -822,10 +834,10 @@ function mapView() {
         h('label', { class: 'btn primary' }, icon('map'), 'Add map', gymMapInput(gym))));
   }
   const f = state.mapFilter ?? 'recent';
-  const g = state.mapGrade;
+  const picked = (state.mapGrades ??= new Set());
   const cutoff = Date.now() - RECENT_DAYS * 86400000;
   const inGym = state.climbs.filter(inActiveGym);
-  const matches = c => (f === 'all' || (f === 'projects' ? c.status === 'project' : c.date >= cutoff)) && (!g || c.grade === g);
+  const matches = c => (f === 'all' || (f === 'projects' ? c.status === 'project' : c.date >= cutoff)) && (!picked.size || picked.has(c.grade));
   const shown = inGym.filter(c => c.pin && matches(c));
   const unpinned = inGym.filter(c => !c.pin && matches(c)).length;
   const view = (mapViews[gym.id] ??= {});
@@ -838,10 +850,16 @@ function mapView() {
   return h('div', {}, head, gymSwitcher(),
     h('div', { class: 'seg' }, [['recent', 'Recent'], ['projects', 'Projects'], ['all', 'All time']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.mapFilter = k; render(); } }, label))),
-    h('div', { class: 'chip-row' }, activeGrades().map(gr => h('button', {
-      class: `chip${g === gr.id ? ' on' : ''}`,
-      onclick: () => { state.mapGrade = g === gr.id ? null : gr.id; render(); },
-    }, swatch(gr.id, '', gym.id), gr.name))),
+    h('div', { class: 'chip-row' },
+      picked.size ? h('button', { class: 'chip', onclick: () => { picked.clear(); render(); } }, icon('x'), 'Clear') : null,
+      activeGrades().map(gr => h('button', {
+        class: `chip${picked.has(gr.id) ? ' on' : ''}`, 'aria-pressed': String(picked.has(gr.id)),
+        onclick: () => { picked.has(gr.id) ? picked.delete(gr.id) : picked.add(gr.id); render(); },
+      }, swatch(gr.id, '', gym.id), gr.name))),
+    !(gym.walls ?? []).length && h('button', { class: 'card list-row walls-prompt', onclick: () => wallsSheet(gym) },
+      icon('climb'), h('div', { class: 'grow' }, h('div', { class: 'card-title' }, 'Add your walls'),
+        h('p', { class: 'muted small' }, 'Name the walls (Cave, Slab…) so climbs can be grouped by wall.')),
+      h('span', { class: 'chev' }, '›')),
     h('div', { class: 'map-wrap' }, viewer.el,
       h('div', { class: 'map-zoom' },
         h('button', { class: 'icon-btn', 'aria-label': 'Zoom in', onclick: viewer.zoomIn }, icon('plus')),
@@ -871,13 +889,51 @@ function gymMapInput(gym, replacing = false) {
       delete mapViews[gym.id];
       await saveSettings();
       render();
-      toast(replacing ? 'Map replaced' : 'Map added. Now pin some climbs!');
+      toast(replacing ? 'Map replaced' : 'Map added');
+      if (!replacing && !(gym.walls ?? []).length) wallsSheet(gym);
     },
   });
 }
 
+// Wall names for a gym, used to group climbs and as the Wall dropdown when logging a climb
+function wallsSheet(gym) {
+  const walls = structuredClone(gym.walls ?? []);
+  const body = h('div');
+  const move = (i, d) => { const [x] = walls.splice(i, 1); walls.splice(i + d, 0, x); draw(); };
+  function draw() {
+    body.replaceChildren(
+      h('p', { class: 'muted small' }, `Name the walls at ${gym.name}, in the order you'd like them listed. Climbs on a removed wall show under "No wall".`),
+      h('div', { style: { marginTop: '12px' } }, walls.map((w, i) => h('div', { class: 'grade-edit' },
+        h('input', { class: 'input', value: w.name, placeholder: 'e.g. Cave', oninput: e => { w.name = e.target.value; } }),
+        h('button', { class: 'icon-btn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(i, -1) }, icon('arrowUp')),
+        h('button', { class: 'icon-btn', 'aria-label': 'Move down', disabled: i === walls.length - 1, onclick: () => move(i, 1) }, icon('arrowDown')),
+        h('button', { class: 'icon-btn', 'aria-label': 'Remove', onclick: () => { walls.splice(i, 1); draw(); } }, icon('x'))))),
+      h('button', {
+        class: 'btn ghost full',
+        onclick: () => { walls.push({ id: uid(), name: '' }); draw(); body.querySelectorAll('input')[walls.length - 1]?.focus(); },
+      }, '+ Add wall'));
+  }
+  if (!walls.length) walls.push({ id: uid(), name: '' });
+  draw();
+  openSheet(`Walls at ${gym.name}`, body, [
+    h('button', { class: 'btn', onclick: closeSheet }, 'Cancel'),
+    h('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        gym.walls = walls.map(w => ({ ...w, name: w.name.trim() })).filter(w => w.name);
+        await saveSettings();
+        closeSheet();
+        render();
+      },
+    }, 'Save walls'),
+  ]);
+}
+
 function mapOptionsSheet(gym) {
   openSheet(`${gym.name} map`, h('div', { class: 'stack' },
+    h('button', { class: 'card list-row menu-item', onclick: () => { closeSheet(); wallsSheet(gym); } }, icon('climb'),
+      h('div', {}, h('div', {}, 'Walls'),
+        h('p', { class: 'muted small', style: { fontWeight: 400 } }, (gym.walls ?? []).map(w => w.name).join(', ') || 'None yet'))),
     h('label', { class: 'card list-row menu-item' }, icon('map'),
       h('div', {}, h('div', {}, 'Replace map'),
         h('p', { class: 'muted small', style: { fontWeight: 400 } }, 'Pins keep their spot on the image, so use a map with the same layout.')),
@@ -934,21 +990,42 @@ function pinSheet(c, gym, onDone) {
   ]);
 }
 
+const STATUS_ICON = { project: 'projecting', sent: 'check', flash: 'flash' };
+const statusBadge = st => h('span', { class: `status-badge ${st}` }, icon(STATUS_ICON[st]), STATUS[st]);
+const wallOf = c => gymById(climbGymId(c))?.walls?.find(w => w.id === c.wallId);
+
 function climbTile(c, onClick = () => climbSheet(c)) {
-  const meta = [fmtDate(c.date), c.status !== 'flash' && c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'}` : null];
-  return h('button', { class: 'climb-tile', onclick: onClick },
-    c.photoIds?.[0] ? photoImg(c.photoIds[0], 'tile-img') : h('div', { class: 'tile-img placeholder', style: { background: climbGrade(c).color } }),
+  const g = climbGrade(c);
+  const wall = wallOf(c)?.name;
+  const tries = c.status !== 'flash' && c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'}` : null;
+  return h('button', { class: `climb-tile status-${c.status}`, onclick: onClick },
+    h('div', { class: 'tile-media' },
+      c.photoIds?.[0] ? photoImg(c.photoIds[0], 'tile-img') : h('div', { class: 'tile-img placeholder', style: { background: g.color } }),
+      statusBadge(c.status)),
     h('div', { class: 'tile-meta' },
-      h('div', { class: 'row tight' }, climbSwatch(c), h('strong', {}, c.name || climbGrade(c).name)),
-      h('span', { class: `badge ${c.status}` }, STATUS[c.status]),
-      h('span', { class: 'muted small' }, meta.filter(Boolean).join(' · '))));
+      h('strong', { class: 'tile-name' }, c.name || wall || g.name),
+      h('span', { class: 'tile-sub' }, climbSwatch(c), [g.name, c.name ? wall : null].filter(Boolean).join(' · ')),
+      h('span', { class: 'tile-date' }, [fmtDate(c.date), tries].filter(Boolean).join(' · '))));
+}
+
+// Wall picker in the climb form; walls are set up per gym in the Map tab
+function wallField(c) {
+  const gym = gymById(c.gymId);
+  const walls = gym?.walls ?? [];
+  if (!walls.length) {
+    return h('div', { class: 'field' }, h('span', {}, 'Wall'),
+      h('p', { class: 'muted small' }, `No walls set up for ${gym?.name ?? 'this gym'}. Add them in the Map tab, or mention the wall in the name or notes.`));
+  }
+  return field('Wall', h('select', { class: 'input', onchange: e => { c.wallId = e.target.value || null; } },
+    h('option', { value: '' }, 'No wall'),
+    walls.map(w => h('option', { value: w.id, selected: c.wallId === w.id }, w.name))));
 }
 
 function climbSheet(existing, sessionId = null, onSaved = null) {
   const lastGrade = [...state.climbs].filter(inActiveGym).sort((a, b) => b.date - a.date)[0]?.grade;
   const c = existing ? structuredClone(existing) : {
     id: uid(), date: Date.now(), grade: (gradeIndex(lastGrade) >= 0 ? lastGrade : null) ?? activeGrades()[0]?.id, name: '', status: 'project',
-    attempts: 1, notes: '', photoIds: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null, gymId: activeGym().id,
+    attempts: null, notes: '', photoIds: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null, gymId: activeGym().id,
   };
   c.gymId ??= climbGymId(c);
   const newPhotos = new Map();
@@ -1002,7 +1079,7 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         h('div', { class: 'chip-row' }, state.settings.gyms.map(gym => h('button', {
           class: `chip${c.gymId === gym.id ? ' on' : ''}`,
           onclick: () => {
-            if (c.gymId !== gym.id) c.pin = null;
+            if (c.gymId !== gym.id) { c.pin = null; c.wallId = null; }
             c.gymId = gym.id;
             const grades = gymGrades(gym);
             if (!grades.some(g => g.id === c.grade)) c.grade = grades[0]?.id;
@@ -1013,19 +1090,21 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         h('div', { class: 'grade-picker' }, gymGrades(gymById(c.gymId)).map(g =>
           h('button', { class: `grade-opt${c.grade === g.id ? ' on' : ''}`, onclick: () => { c.grade = g.id; draw(); } },
             swatch(g.id, 'lg', c.gymId), g.name)))),
+      wallField(c),
       mapPinField(c, draw),
-      field('Name or wall (optional)', h('input', {
-        class: 'input', value: c.name, placeholder: 'e.g. Cave overhang, the pinchy one',
+      field('Name (optional)', h('input', {
+        class: 'input', value: c.name, placeholder: 'e.g. The pinchy one',
         oninput: e => { c.name = e.target.value; },
       })),
       h('div', { class: 'field' }, h('span', {}, 'Status'),
         h('div', { class: 'seg' }, Object.entries(STATUS).map(([k, label]) =>
-          h('button', { class: c.status === k ? 'on' : '', onclick: () => setStatus(k) }, label)))),
+          h('button', { class: `status-opt ${k}${c.status === k ? ' on' : ''}`, onclick: () => setStatus(k) }, icon(STATUS_ICON[k]), label)))),
       c.status === 'flash' ? '' : h('div', { class: 'field' }, h('span', {}, 'Attempts'),
         h('div', { class: 'stepper' },
-          h('button', { class: 'btn', 'aria-label': 'Fewer attempts', onclick: () => { c.attempts = Math.max(1, c.attempts - 1); draw(); } }, '−'),
-          h('span', { class: 'val' }, c.attempts),
-          h('button', { class: 'btn', 'aria-label': 'More attempts', onclick: () => { c.attempts++; draw(); } }, '+'))),
+          h('button', { class: 'btn', 'aria-label': 'Fewer attempts', onclick: () => { c.attempts = c.attempts > 1 ? c.attempts - 1 : null; draw(); } }, '−'),
+          h('span', { class: 'val' }, c.attempts ?? '–'),
+          h('button', { class: 'btn', 'aria-label': 'More attempts', onclick: () => { c.attempts = (c.attempts ?? 0) + 1; draw(); } }, '+'),
+          c.attempts == null && h('span', { class: 'muted small', style: { marginLeft: '6px' } }, 'Not sure? Leave it'))),
       field('Date', h('input', {
         class: 'input', type: 'date', value: toDateInput(c.date),
         onchange: e => { if (e.target.value) c.date = new Date(`${e.target.value}T12:00`).getTime(); },
@@ -1174,7 +1253,7 @@ function settingsView() {
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: e => { importData(e.target.files[0]); e.target.value = ''; } }))),
     h('h3', { class: 'section-title' }, 'About'),
     settingsRow('About BetaLab', 'Hobby project · no ads, no tracking', aboutSheet),
-    settingsRow('What’s new', `Version ${APP_VERSION} · ${fmtDay(CHANGES[0].date)}`, () => whatsNewSheet()),
+    settingsRow(`Version ${APP_VERSION}`, 'Tap to check for updates', checkForUpdates),
     h('button', { class: 'data-note', onclick: dataInfoSheet }, 'Your data stays on this device', icon('info')));
 }
 
@@ -1186,7 +1265,8 @@ function aboutSheet() {
     point('No warranty', 'It’s a personal project, provided as-is. Bugs can happen, and your data lives only on your phone, so use Back up data now and then.'),
     point('Feedback and bugs', 'Found a bug or have an idea? Open an issue on GitHub.'),
     h('a', { class: 'btn ghost full', href: 'https://github.com/y3l4h/betalab/issues', target: '_blank', rel: 'noopener' }, 'Report a bug or suggest a feature'),
-    h('button', { class: 'btn ghost full', onclick: () => { closeSheet(); dataInfoSheet(); } }, 'How your data is stored')));
+    h('button', { class: 'btn ghost full', onclick: () => { closeSheet(); dataInfoSheet(); } }, 'How your data is stored'),
+    h('p', { class: 'muted small', style: { textAlign: 'center' } }, `BetaLab ${APP_VERSION}`)));
 }
 
 function dataInfoSheet() {
@@ -1673,27 +1753,12 @@ async function replaceWithBackup(data) {
   render();
 }
 
-// What's new: show the changes someone hasn't seen yet, once, after an update
-const SEEN_KEY = 'betalab.seenVersion';
-const fmtDay = iso => new Date(`${iso}T12:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-
-function whatsNewSheet(changes = CHANGES, title = 'What’s new') {
-  openSheet(title, h('div', { class: 'stack' }, changes.map(c => h('div', { class: 'info-point' },
-    h('strong', {}, `Version ${c.version}`), h('span', { class: 'muted small' }, ` · ${fmtDay(c.date)}`),
-    h('ul', { class: 'change-list' }, c.items.map(item => h('li', {}, item)))))));
-}
-
-function maybeShowWhatsNew() {
-  let seen = null;
-  try { seen = localStorage.getItem(SEEN_KEY); } catch {}
-  try { localStorage.setItem(SEEN_KEY, APP_VERSION); } catch {}
-  if (seen === APP_VERSION) return;
-  // Brand-new users don't need release notes; people who already have data do
-  const hasData = state.plans.length || state.sessions.length || state.climbs.length;
-  if (!seen && !hasData) return;
-  const i = seen ? CHANGES.findIndex(c => c.version === seen) : 1;
-  const unseen = CHANGES.slice(0, i < 0 ? CHANGES.length : Math.max(i, 1));
-  whatsNewSheet(unseen, 'BetaLab was updated');
+async function checkForUpdates() {
+  const reg = await navigator.serviceWorker?.getRegistration?.();
+  if (!reg) { toast(`You’re on version ${APP_VERSION}`); return; }
+  toast('Checking for updates…');
+  await reg.update().catch(() => {});
+  toast(reg.installing || reg.waiting ? 'Downloading the new version. Tap Update when it’s ready.' : `You’re on the latest version (${APP_VERSION})`);
 }
 
 // A new version finished downloading in the background: offer a reload instead of waiting for the next launch
@@ -1762,10 +1827,11 @@ async function init() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { flushPending(); persistDraft(); } else checkForgottenSession();
   });
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
   timer.init();
   setInterval(tickClocks, 1000);
   render();
-  maybeShowWhatsNew();
   checkForgottenSession();
   watchForUpdates();
 }
