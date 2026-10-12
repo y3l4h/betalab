@@ -520,3 +520,9 @@ body.on-map .map-note { flex: none; }
 
 /* Keep the tab bar pinned even while the page scrolls or rubber-bands */
 .tabbar { transform: translateZ(0); }
+
+/* iOS can hold back space at the bottom of home-screen apps; --vp-gap (measured in app.js) extends everything down into it */
+main, .lightbox, .overlay, .session-panel, .tabbar { bottom: calc(0px - var(--vp-gap, 0px)); }
+.timer, .mini-bars { bottom: calc(var(--tabbar-total) + 10px - var(--vp-gap, 0px)); }
+body.timer-open .mini-bars { bottom: calc(var(--tabbar-total) + 92px - var(--vp-gap, 0px)); }
+body.session-open .timer { bottom: calc(env(safe-area-inset-bottom) + 12px - var(--vp-gap, 0px)); }

@@ -1776,6 +1776,23 @@ function watchForUpdates() {
   });
 }
 
+// Some iOS versions keep Safari-toolbar space free at the bottom of a home-screen app when the page can't scroll.
+// Measure how far the real screen reaches below the app's viewport and let the bottom bars extend into it.
+function measureViewportGap() {
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:0;width:0;height:100lvh;visibility:hidden;pointer-events:none';
+  document.body.append(probe);
+  let gap = probe.getBoundingClientRect().height - window.innerHeight;
+  probe.remove();
+  if (navigator.standalone === true) {
+    const landscape = window.innerWidth > window.innerHeight;
+    const screenH = landscape ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
+    gap = Math.max(gap, screenH - window.innerHeight);
+  }
+  gap = gap > 0 && gap < 160 ? Math.round(gap) : 0;
+  document.documentElement.style.setProperty('--vp-gap', `${gap}px`);
+}
+
 // Settings from before gyms existed had one colour list (and maybe the V-scale switch): turn that into gyms
 function migrateGyms(settings) {
   if (settings.gyms) return;
@@ -1829,6 +1846,9 @@ async function init() {
   });
   for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
   document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  measureViewportGap();
+  for (const ev of ['resize', 'orientationchange', 'pageshow']) window.addEventListener(ev, measureViewportGap);
+  window.visualViewport?.addEventListener('resize', measureViewportGap);
   timer.init();
   setInterval(tickClocks, 1000);
   render();
