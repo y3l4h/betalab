@@ -1,5 +1,5 @@
 // Bump CACHE when shipping changes; the app serves from cache and refreshes in the background
-const CACHE = 'betalab-v16';
+const CACHE = 'betalab-v17';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './db.js', './defaults.js', './timer.js', './icons.js', './version.js', './map.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',

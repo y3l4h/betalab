@@ -139,7 +139,7 @@ Then open http://localhost:5180.
 **Shipping an update**
 
 1. Bump `CACHE` in `sw.js` (e.g. `betalab-v13`) so phones download the new files.
-2. Bump `APP_VERSION` in `version.js`. It shows in Settings so people can compare versions. Release notes live in the git history.
+2. Bump `APP_VERSION` in `version.js`. It shows in Settings so people can compare versions. BetaLab is in beta (0.x) until the official 1.0 release. Release notes live in the git history.
 3. If you add a new JavaScript file, also add it to `ASSETS` in `sw.js` so it works offline.
 
 Phones pick up the update in the background and show an **Update** banner, or get it the next time the app is opened.

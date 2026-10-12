@@ -40,6 +40,8 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* The page itself never scrolls (iOS home-screen apps nudge bottom-fixed bars when it does); main is the scroller */
+html, body { height: 100%; overflow: hidden; }
 html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
 body {
   margin: 0;
@@ -56,6 +58,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
 main {
+  position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   max-width: 640px;
   margin: 0 auto;
   padding: calc(env(safe-area-inset-top) + 16px) 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);
@@ -503,7 +506,7 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
 /* Map tab: a fixed screen, with the map filling the space between the filters and the tabs */
 body.on-map { overflow: hidden; }
 body.on-map main {
-  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; overflow: hidden;
   padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px + var(--bars, 0) * 60px);
 }
 body.on-map.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 96px + var(--bars, 0) * 60px); }

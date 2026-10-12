@@ -256,13 +256,13 @@ function closeSheet() {
 
 function render() {
   const main = document.getElementById('main');
-  const y = window.scrollY;
+  const y = main.scrollTop;
   const same = main.dataset.tab === state.tab;
   const views = { train: trainView, climbs: climbsView, progress: progressView, map: mapView, settings: settingsView };
   main.replaceChildren(views[state.tab]());
   main.dataset.tab = state.tab;
   document.body.classList.toggle('on-map', state.tab === 'map' && !!activeGym()?.map);
-  window.scrollTo(0, same ? y : 0);
+  main.scrollTop = same ? y : 0;
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === state.tab));
   renderSession();
   renderBars();
