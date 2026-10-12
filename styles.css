@@ -43,8 +43,6 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-/* The page itself never scrolls (iOS home-screen apps nudge bottom-fixed bars when it does); main is the scroller */
-html, body { height: 100%; overflow: hidden; }
 html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
 body {
   margin: 0;
@@ -53,7 +51,6 @@ body {
   font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
   overscroll-behavior-y: none;
 }
-body.sheet-open { overflow: hidden; }
 h1, h2, h3, p { margin: 0; }
 h1 { font-size: 28px; font-weight: 750; letter-spacing: -.02em; }
 h2 { font-size: 20px; font-weight: 700; }
@@ -61,7 +58,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
 main {
-  position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  /* Always slightly taller than the screen: iOS home-screen apps keep a blank strip at the bottom on pages that can't scroll */
+  min-height: calc(100lvh + 2px);
   max-width: 640px;
   margin: 0 auto;
   padding: calc(env(safe-area-inset-top) + 16px) 16px calc(var(--tabbar-total) + 24px);
@@ -330,7 +328,6 @@ textarea.input { resize: vertical; min-height: 80px; }
 .rest-chips { margin-top: 10px; justify-content: center; padding-bottom: 0; }
 .session-body { flex: 1; overflow-y: auto; padding: 14px 16px calc(env(safe-area-inset-bottom) + 24px); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 body.timer-open .session-body { padding-bottom: calc(env(safe-area-inset-bottom) + 110px); }
-body.session-open { overflow: hidden; }
 body.session-open .timer { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 
 .mini-bars {
@@ -506,23 +503,17 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-total) + 112px + var(--
 .walls-prompt { margin: 2px 0 8px; }
 .walls-prompt > .icon { color: var(--accent-text); }
 
-/* Map tab: a fixed screen, with the map filling the space between the filters and the tabs */
-body.on-map { overflow: hidden; }
-body.on-map main {
-  display: flex; flex-direction: column; overflow: hidden;
-  padding-bottom: calc(var(--tabbar-total) + 12px + var(--bars, 0) * 60px);
+/* Map tab: a fixed screen between the top and the tab bar, with the map filling the space under the filters */
+.map-screen {
+  position: fixed; top: 0; left: 0; right: 0; margin: 0 auto; max-width: 640px; z-index: 1;
+  bottom: calc(var(--tabbar-total) + 12px + var(--bars, 0) * 60px);
+  padding: calc(env(safe-area-inset-top) + 16px) 16px 0;
+  display: flex; flex-direction: column; background: var(--bg);
 }
-body.on-map.timer-open main { padding-bottom: calc(var(--tabbar-total) + 96px + var(--bars, 0) * 60px); }
-body.on-map main > div { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-body.on-map .map-wrap { flex: 1; min-height: 160px; }
-body.on-map main .map-stage { height: 100%; }
-body.on-map .map-note { flex: none; }
+body.timer-open .map-screen { bottom: calc(var(--tabbar-total) + 96px + var(--bars, 0) * 60px); }
+.map-screen .map-wrap { flex: 1; min-height: 160px; }
+.map-screen .map-stage { height: 100%; }
+.map-screen .map-note { flex: none; }
 
 /* Keep the tab bar pinned even while the page scrolls or rubber-bands */
 .tabbar { transform: translateZ(0); }
-
-/* iOS can hold back space at the bottom of home-screen apps; --vp-gap (measured in app.js) extends everything down into it */
-main, .lightbox, .overlay, .session-panel, .tabbar { bottom: calc(0px - var(--vp-gap, 0px)); }
-.timer, .mini-bars { bottom: calc(var(--tabbar-total) + 10px - var(--vp-gap, 0px)); }
-body.timer-open .mini-bars { bottom: calc(var(--tabbar-total) + 92px - var(--vp-gap, 0px)); }
-body.session-open .timer { bottom: calc(env(safe-area-inset-bottom) + 12px - var(--vp-gap, 0px)); }

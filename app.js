@@ -256,13 +256,12 @@ function closeSheet() {
 
 function render() {
   const main = document.getElementById('main');
-  const y = main.scrollTop;
+  const y = window.scrollY;
   const same = main.dataset.tab === state.tab;
   const views = { train: trainView, climbs: climbsView, progress: progressView, map: mapView, settings: settingsView };
   main.replaceChildren(views[state.tab]());
   main.dataset.tab = state.tab;
-  document.body.classList.toggle('on-map', state.tab === 'map' && !!activeGym()?.map);
-  main.scrollTop = same ? y : 0;
+  window.scrollTo(0, Math.max(1, same ? y : 0));
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === state.tab));
   renderSession();
   renderBars();
@@ -847,7 +846,7 @@ function mapView() {
     onPin: pin => climbSheet(pin.item),
     onCluster: climbsHereSheet,
   });
-  return h('div', {}, head, gymSwitcher(),
+  return h('div', { class: 'map-screen' }, head, gymSwitcher(),
     h('div', { class: 'seg' }, [['recent', 'Recent'], ['projects', 'Projects'], ['all', 'All time']].map(([k, label]) =>
       h('button', { class: f === k ? 'on' : '', onclick: () => { state.mapFilter = k; render(); } }, label))),
     h('div', { class: 'chip-row' },
@@ -1776,23 +1775,6 @@ function watchForUpdates() {
   });
 }
 
-// Some iOS versions keep Safari-toolbar space free at the bottom of a home-screen app when the page can't scroll.
-// Measure how far the real screen reaches below the app's viewport and let the bottom bars extend into it.
-function measureViewportGap() {
-  const probe = document.createElement('div');
-  probe.style.cssText = 'position:fixed;top:0;width:0;height:100lvh;visibility:hidden;pointer-events:none';
-  document.body.append(probe);
-  let gap = probe.getBoundingClientRect().height - window.innerHeight;
-  probe.remove();
-  if (navigator.standalone === true) {
-    const landscape = window.innerWidth > window.innerHeight;
-    const screenH = landscape ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
-    gap = Math.max(gap, screenH - window.innerHeight);
-  }
-  gap = gap > 0 && gap < 160 ? Math.round(gap) : 0;
-  document.documentElement.style.setProperty('--vp-gap', `${gap}px`);
-}
-
 // Settings from before gyms existed had one colour list (and maybe the V-scale switch): turn that into gyms
 function migrateGyms(settings) {
   if (settings.gyms) return;
@@ -1846,9 +1828,8 @@ async function init() {
   });
   for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
   document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
-  measureViewportGap();
-  for (const ev of ['resize', 'orientationchange', 'pageshow']) window.addEventListener(ev, measureViewportGap);
-  window.visualViewport?.addEventListener('resize', measureViewportGap);
+  // Keep the page nudged 1px down: iOS then keeps its toolbar strip folded away, like on a page you've scrolled
+  window.addEventListener('scroll', () => { if (window.scrollY < 1) window.scrollTo(0, 1); }, { passive: true });
   timer.init();
   setInterval(tickClocks, 1000);
   render();
