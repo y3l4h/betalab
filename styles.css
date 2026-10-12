@@ -14,7 +14,10 @@
   --good: #15803d;
   --shadow: 0 1px 2px rgba(0, 0, 0, .05);
   --radius: 14px;
-  --tabbar-h: 64px;
+  --tabbar-h: 54px;
+  /* Space under the tab bar: most of the iPhone home-indicator strip (like native tab bars), a small margin elsewhere */
+  --tabbar-pad: max(calc(env(safe-area-inset-bottom) - 10px), 8px);
+  --tabbar-total: calc(var(--tabbar-h) + var(--tabbar-pad));
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -61,9 +64,9 @@ main {
   position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   max-width: 640px;
   margin: 0 auto;
-  padding: calc(env(safe-area-inset-top) + 16px) 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);
+  padding: calc(env(safe-area-inset-top) + 16px) 16px calc(var(--tabbar-total) + 24px);
 }
-body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 112px); }
+body.timer-open main { padding-bottom: calc(var(--tabbar-total) + 112px); }
 
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 8px 0 16px; }
 .eyebrow { font-size: 13px; font-weight: 600; color: var(--accent-text); text-transform: uppercase; letter-spacing: .06em; }
@@ -332,11 +335,11 @@ body.session-open .timer { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 
 .mini-bars {
   position: fixed; left: 12px; right: 12px; margin: 0 auto; max-width: 616px; z-index: 22;
-  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 10px);
+  bottom: calc(var(--tabbar-total) + 10px);
   display: flex; flex-direction: column; gap: 8px;
 }
 .mini-bars:empty { display: none; }
-body.timer-open .mini-bars { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 92px); }
+body.timer-open .mini-bars { bottom: calc(var(--tabbar-total) + 92px); }
 .mini-bar {
   display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 14px;
   border: 0; border-radius: 16px; background: var(--accent); color: var(--accent-ink);
@@ -347,8 +350,8 @@ body.timer-open .mini-bars { bottom: calc(var(--tabbar-h) + env(safe-area-inset-
 .mini-bar .icon { width: 18px; height: 18px; }
 .mini-bar .chev { color: inherit; font-size: 18px; }
 /* Leave room under the page for however many bars are stacked */
-main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px + var(--bars, 0) * 60px); }
-body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 112px + var(--bars, 0) * 60px); }
+main { padding-bottom: calc(var(--tabbar-total) + 24px + var(--bars, 0) * 60px); }
+body.timer-open main { padding-bottom: calc(var(--tabbar-total) + 112px + var(--bars, 0) * 60px); }
 .mini-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mini-meta { font-variant-numeric: tabular-nums; opacity: .85; font-size: 15px; }
 .live-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; animation: blink 1.6s ease-in-out infinite; }
@@ -368,7 +371,7 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
 /* Timer */
 .timer {
   position: fixed; left: 12px; right: 12px; margin: 0 auto; z-index: 30;
-  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 10px);
+  bottom: calc(var(--tabbar-total) + 10px);
   max-width: 616px; overflow: hidden;
   background: var(--text); color: var(--bg); border-radius: 18px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
 }
@@ -388,7 +391,7 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
   display: flex; justify-content: center;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--tabbar-pad);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
@@ -398,7 +401,7 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   color: var(--muted); font-size: 11px; font-weight: 600;
 }
-.tabbar svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tabbar svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tabbar button.on { color: var(--accent-text); }
 
 .toast {
@@ -507,9 +510,9 @@ body.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inse
 body.on-map { overflow: hidden; }
 body.on-map main {
   display: flex; flex-direction: column; overflow: hidden;
-  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px + var(--bars, 0) * 60px);
+  padding-bottom: calc(var(--tabbar-total) + 12px + var(--bars, 0) * 60px);
 }
-body.on-map.timer-open main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 96px + var(--bars, 0) * 60px); }
+body.on-map.timer-open main { padding-bottom: calc(var(--tabbar-total) + 96px + var(--bars, 0) * 60px); }
 body.on-map main > div { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.on-map .map-wrap { flex: 1; min-height: 160px; }
 body.on-map main .map-stage { height: 100%; }
