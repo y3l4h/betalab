@@ -367,7 +367,8 @@ async function finishSession(s, endAt = Date.now()) {
   timer.stop();
   state.sessionOpen = false;
   render();
-  toast('Session saved');
+  const st = sessionStats(s);
+  toast(st.tops ? `Session saved · ${st.tops} climb${st.tops === 1 ? '' : 's'}${st.best.length ? ' · new best!' : ''}` : 'Session saved');
   maybeRemindBackup();
 }
 
@@ -454,14 +455,15 @@ function trainView() {
 
 function historyRow(s) {
   const [done, total] = setCounts(s);
-  const climbs = state.climbs.filter(c => c.sessionId === s.id).length;
+  const st = sessionStats(s);
   const gym = state.settings.gyms.length > 1 && gymById(s.gymId)?.name;
   const bits = [fmtDate(s.startedAt), fmtDuration(s.endedAt - s.startedAt) + (s.timeEdited ? ' (edited)' : ''), gym,
-    total && `${done}/${total} sets`, climbs && `${climbs} climb${climbs > 1 ? 's' : ''}`];
+    total && `${done}/${total} sets`, st.tops && `${st.tops} climb${st.tops > 1 ? 's' : ''} on ${st.problems}`];
   return h('button', { class: 'card list-row', onclick: () => sessionSheet(s) },
     h('div', { class: 'grow' },
       h('div', { class: 'card-title' }, s.name),
-      h('p', { class: 'muted small' }, bits.filter(Boolean).join(' · '))),
+      h('p', { class: 'muted small' }, bits.filter(Boolean).join(' · ')),
+      st.best.length ? h('p', { class: 'highlight best small' }, icon('projecting'), st.best.map(t => `First ${climbGrade(t.c).name}`).join(', ')) : null),
     h('span', { class: 'chev' }, '›'));
 }
 
@@ -487,7 +489,7 @@ function sessionView(s) {
     const key = e.section || 'Main';
     sections.set(key, [...(sections.get(key) ?? []), e]);
   }
-  const climbs = state.climbs.filter(c => c.sessionId === s.id);
+  const climbs = sessionClimbs(s);
   return h('div', {},
     h('div', { class: 'progress' }, h('div', { style: { width: `${total ? (done / total) * 100 : 0}%` } })),
     h('p', { class: 'muted small', style: { marginTop: '6px' } }, `${done} of ${total} sets done`),
@@ -501,7 +503,10 @@ function sessionView(s) {
         render();
       }),
     }, '+ Add exercise'),
-    climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs this session'), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
+    climbs.length ? [
+      h('h3', { class: 'section-title' }, 'Climbs this session'),
+      sessionSummary(s),
+      h('div', { class: 'tally' }, climbs.map(c => tallyRow(s, c)))] : null,
     h('h3', { class: 'section-title' }, 'Session notes'),
     h('textarea', {
       class: 'input', rows: 3, placeholder: 'How did it feel? Skin, energy, beta…', value: s.notes,
@@ -606,17 +611,27 @@ function exerciseClimbs(s, e) {
 function toggleSet(s, e, i) {
   touch(s);
   const value = !e.done[i];
-  for (const c of linkedClimbs(e)) e.climbDone[c.id][i] = value;
+  for (const c of linkedClimbs(e)) { e.climbDone[c.id][i] = value; setClimbRound(e, c.id, i, value).then(() => { save('sessions', s); render(); }); }
   e.done[i] = value;
   if (value && e.rest > 0) timer.start(e.rest, `Rest · ${e.name}`);
   save('sessions', s);
   render();
 }
 
+async function setClimbRound(e, climbId, i, value) {
+  const c = state.climbs.find(x => x.id === climbId);
+  if (!c) return;
+  e.climbAscents ??= {};
+  const key = `${climbId}:${i}`;
+  if (value && !e.climbAscents[key]) e.climbAscents[key] = (await logAscent(c, topsOf(c).length ? 'repeat' : 'send', true)).id;
+  if (!value && e.climbAscents[key]) { await removeAscent(c, e.climbAscents[key]); delete e.climbAscents[key]; }
+}
+
 function toggleClimbRound(s, e, climbId, i) {
   touch(s);
   const wasDone = e.done[i];
   e.climbDone[climbId][i] = !e.climbDone[climbId][i];
+  setClimbRound(e, climbId, i, e.climbDone[climbId][i]).then(() => { save('sessions', s); render(); });
   syncRounds(e);
   if (!wasDone && e.done[i] && e.rest > 0) timer.start(e.rest, `Round ${i + 1} rest · ${e.name}`);
   save('sessions', s);
@@ -642,6 +657,69 @@ function attachClimbSheet(s, e) {
       h('h3', { class: 'section-title' }, 'Or pick one you’ve logged'),
       h('div', { class: 'climb-grid' }, recent.map(c => climbTile(c, () => { closeSheet(); attach(c); }))),
     ] : null));
+}
+
+// Climbs that belong to a session: added during it, or climbed (or tried) during it
+const sessionClimbs = s => state.climbs.filter(c => c.sessionId === s.id || ascentsOf(c).some(a => a.sessionId === s.id));
+const gradeRank = c => gymGrades(gymById(climbGymId(c))).findIndex(g => g.id === c.grade);
+
+// First time topping this grade (or harder) at this gym
+function isPersonalBest(c, a) {
+  const gymId = climbGymId(c), rank = gradeRank(c);
+  return rank >= 0 && !state.climbs.some(o => climbGymId(o) === gymId && gradeRank(o) >= rank && topsOf(o).some(x => x.at < a.at && x.id !== a.id));
+}
+
+function sessionStats(s) {
+  const tops = [], goes = [];
+  for (const c of state.climbs) for (const a of ascentsOf(c)) if (a.sessionId === s.id) (isTop(a) ? tops : goes).push({ c, a });
+  const byGrade = new Map();
+  for (const { c } of tops) {
+    const g = climbGrade(c);
+    const key = `${climbGymId(c)}:${c.grade}`;
+    byGrade.set(key, { name: g.name, color: g.color, rank: gradeRank(c), n: (byGrade.get(key)?.n ?? 0) + 1 });
+  }
+  const newSends = tops.filter(t => firstTop(t.c)?.id === t.a.id);
+  return {
+    tops: tops.length, goes: goes.length, problems: new Set(tops.map(t => t.c.id)).size,
+    grades: [...byGrade.values()].sort((a, b) => a.rank - b.rank),
+    flashes: tops.filter(t => t.a.type === 'flash').length,
+    newSends, best: newSends.filter(t => isPersonalBest(t.c, t.a)),
+  };
+}
+
+const gradeChips = grades => h('div', { class: 'grade-chips' }, grades.map(g =>
+  h('span', { class: 'grade-chip' }, h('span', { class: 'swatch', style: { background: g.color } }), `${g.name} ×${g.n}`)));
+
+function sessionSummary(s) {
+  const st = sessionStats(s);
+  if (!st.tops && !st.goes) return '';
+  const goes = st.goes ? ` · ${st.goes} ${st.goes === 1 ? 'go' : 'goes'} on projects` : '';
+  return h('div', { class: 'card session-summary' },
+    h('div', { class: 'summary-head' }, h('strong', {}, `${st.tops} climb${st.tops === 1 ? '' : 's'}`),
+      h('span', { class: 'muted' }, ` on ${st.problems} problem${st.problems === 1 ? '' : 's'}${goes}`)),
+    st.grades.length ? gradeChips(st.grades) : null,
+    st.best.map(t => h('p', { class: 'highlight best' }, icon('projecting'), `New best: first ${climbGrade(t.c).name}${t.c.attempts > 1 ? ` · ${t.c.attempts} goes` : ''}`)),
+    st.newSends.filter(t => !st.best.includes(t)).map(t => h('p', { class: 'highlight' }, icon(t.a.type === 'flash' ? 'flash' : 'check'),
+      `New ${t.a.type === 'flash' ? 'flash' : 'send'}: ${t.c.name || climbGrade(t.c).name}${t.a.type !== 'flash' && t.c.attempts > 1 ? ` · ${t.c.attempts} goes` : ''}`)));
+}
+
+function tallyRow(s, c) {
+  const here = ascentsOf(c).filter(a => a.sessionId === s.id);
+  const tops = here.filter(isTop).length, goes = here.filter(a => a.type === 'go').length;
+  const sent = topsOf(c).length > 0;
+  const g = climbGrade(c);
+  const wall = wallOf(c)?.name;
+  return h('div', { class: 'tally-row' },
+    h('button', { class: 'tally-main', onclick: () => climbSheet(c) },
+      climbSwatch(c),
+      h('div', { class: 'grow' },
+        h('div', { class: 'tally-name' }, c.name || wall || g.name),
+        h('div', { class: 'muted small' }, [g.name, c.name ? wall : null, sent ? null : 'Project'].filter(Boolean).join(' · '))),
+      h('span', { class: 'tally-count' }, tops ? `×${tops}` : goes ? `${goes} ${goes === 1 ? 'go' : 'goes'}` : '')),
+    sent
+      ? h('button', { class: 'btn small primary', onclick: () => logAscent(c, 'repeat') }, '+1')
+      : [h('button', { class: 'btn small', onclick: () => logAscent(c, 'go') }, '+ go'),
+        h('button', { class: 'btn small primary', onclick: () => logAscent(c, 'send') }, 'Sent')]);
 }
 
 function sessionsSheet() {
@@ -707,7 +785,7 @@ function editSessionTimeSheet(s, onDone) {
 }
 
 function sessionSheet(s) {
-  const climbs = state.climbs.filter(c => c.sessionId === s.id);
+  const climbs = sessionClimbs(s);
   const reopen = () => { closeSheet(); sessionSheet(s); render(); };
   const body = h('div', {},
     h('div', { class: 'row' },
@@ -721,7 +799,7 @@ function sessionSheet(s) {
         h('span', { class: 'muted small' }, exCounts(e).join('/'))),
       linkedClimbs(e).length ? h('p', { class: 'muted small' }, linkedClimbs(e).map(c => c.name || climbGrade(c).name).join(', ')) : null,
       e.note && h('p', { class: 'small', style: { marginTop: '4px' } }, e.note))),
-    climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs'), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
+    climbs.length ? [h('h3', { class: 'section-title' }, 'Climbs'), sessionSummary(s), h('div', { class: 'climb-grid' }, climbs.map(c => climbTile(c)))] : null,
     h('h3', { class: 'section-title' }, 'Notes'),
     h('textarea', {
       class: 'input', rows: 3, value: s.notes, placeholder: 'Session notes',
@@ -752,7 +830,7 @@ function climbsView() {
   const list = state.climbs
     .filter(c => inActiveGym(c) && (f === 'all' || (f === 'project' ? c.status === 'project' : c.status !== 'project')) && (!picked.size || picked.has(c.grade)))
     .sort((a, b) => b.date - a.date);
-  const grid = items => h('div', { class: 'climb-grid' }, items.map(c => climbTile(c)));
+  const grid = items => h('div', { class: 'climb-grid' }, items.map(c => climbTile(c, undefined, true)));
   // With walls set up, climbs are grouped under each wall (in the gym's wall order), then "No wall"
   const groups = walls.length
     ? [...walls.map(w => ({ name: w.name, items: list.filter(c => c.wallId === w.id) })),
@@ -885,6 +963,7 @@ function gymMapInput(gym, replacing = false) {
       await db.put('photos', { id, blob });
       if (gym.map?.photoId) { await db.del('photos', gym.map.photoId); photoUrls.delete(gym.map.photoId); }
       gym.map = { photoId: id, w: bitmap.width, h: bitmap.height };
+      gym.updatedAt = Date.now();
       delete mapViews[gym.id];
       await saveSettings();
       render();
@@ -920,6 +999,7 @@ function wallsSheet(gym) {
       class: 'btn primary',
       onclick: async () => {
         gym.walls = walls.map(w => ({ ...w, name: w.name.trim() })).filter(w => w.name);
+        gym.updatedAt = Date.now();
         await saveSettings();
         closeSheet();
         render();
@@ -944,6 +1024,7 @@ function mapOptionsSheet(gym) {
         await db.del('photos', gym.map.photoId);
         photoUrls.delete(gym.map.photoId);
         delete gym.map;
+        gym.updatedAt = Date.now();
         await saveSettings();
         closeSheet();
         render();
@@ -990,14 +1071,75 @@ function pinSheet(c, gym, onDone) {
 }
 
 const STATUS_ICON = { project: 'projecting', sent: 'check', flash: 'flash' };
+
+// Ascents: each time a climb is topped (flash, send, repeat) or tried without topping it (go)
+const TOP_TYPES = ['flash', 'send', 'repeat'];
+const isTop = a => TOP_TYPES.includes(a.type);
+const ascentsOf = c => c.ascents ?? [];
+const topsOf = c => ascentsOf(c).filter(isTop);
+const firstTop = c => topsOf(c).reduce((f, a) => (!f || a.at < f.at ? a : f), null);
+const ASCENT_LABEL = { flash: 'Flash', send: 'Sent', repeat: 'Climbed again', go: 'Go' };
+
+// A climb's status and sent date always follow its first top-out
+function syncClimb(c) {
+  const first = firstTop(c);
+  c.status = !first ? 'project' : first.type === 'flash' ? 'flash' : 'sent';
+  c.sentAt = first?.at ?? null;
+}
+
+// Climbs from before ascents existed only had a status: that becomes their first ascent
+function ascentsFromStatus(c) {
+  if (c.status === 'project') return [];
+  return [{ id: uid(), at: c.sentAt ?? c.date, type: c.status === 'flash' ? 'flash' : 'send', sessionId: c.sessionId ?? null }];
+}
+
+async function logAscent(c, type, quiet = false) {
+  const running = activeSession();
+  const a = { id: uid(), at: Date.now(), type, sessionId: running?.id ?? null };
+  c.ascents = [...ascentsOf(c), a];
+  if (type === 'go' || type === 'send') c.attempts = (c.attempts ?? 0) + 1;
+  if (type === 'flash') c.attempts = 1;
+  syncClimb(c);
+  await save('climbs', c);
+  if (running) { touch(running); await save('sessions', running); }
+  if (quiet) return a;
+  render();
+  const goes = n => `${n} ${n === 1 ? 'go' : 'goes'}`;
+  toast(type === 'go' ? `Go logged · ${goes(c.attempts)} so far`
+    : type === 'repeat' ? `Logged · climbed ${topsOf(c).length} times`
+      : `${STATUS[c.status]}!${c.attempts > 1 ? ` Took ${goes(c.attempts)}` : ''}`);
+  return a;
+}
+
+async function removeAscent(c, ascentId) {
+  c.ascents = ascentsOf(c).filter(a => a.id !== ascentId);
+  syncClimb(c);
+  await save('climbs', c);
+}
+
+// For a project: another go, or finally sent it
+function projectLogSheet(c) {
+  const g = climbGrade(c);
+  openSheet(c.name || wallOf(c)?.name || g.name, h('div', {},
+    h('p', { class: 'tile-sub' }, climbSwatch(c), [g.name, wallOf(c)?.name, 'Project'].filter(Boolean).join(' · ')),
+    h('p', { class: 'muted small', style: { marginTop: '8px' } }, c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'} so far.` : 'No goes logged yet.')), [
+    h('button', { class: 'btn', onclick: () => { closeSheet(); logAscent(c, 'go'); } }, '+ Another go'),
+    h('button', { class: 'btn primary', onclick: () => { closeSheet(); logAscent(c, 'send'); } }, icon('check'), 'Sent it!'),
+  ]);
+}
+
+// Tap a climb you've logged before: sent climbs log a repeat, projects ask go or send
+const quickLog = c => (topsOf(c).length ? logAscent(c, 'repeat') : projectLogSheet(c));
 const statusBadge = st => h('span', { class: `status-badge ${st}` }, icon(STATUS_ICON[st]), STATUS[st]);
 const wallOf = c => gymById(climbGymId(c))?.walls?.find(w => w.id === c.wallId);
 
-function climbTile(c, onClick = () => climbSheet(c)) {
+function climbTile(c, onClick = () => climbSheet(c), quick = false) {
   const g = climbGrade(c);
   const wall = wallOf(c)?.name;
-  const tries = c.status !== 'flash' && c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'}` : null;
-  return h('button', { class: `climb-tile status-${c.status}`, onclick: onClick },
+  const timesTopped = topsOf(c).length;
+  const tries = timesTopped > 1 ? `climbed ${timesTopped}×`
+    : c.status !== 'flash' && c.attempts ? `${c.attempts} ${c.attempts === 1 ? 'go' : 'goes'}` : null;
+  const tile = h('button', { class: `climb-tile status-${c.status}`, onclick: onClick },
     h('div', { class: 'tile-media' },
       c.photoIds?.[0] ? photoImg(c.photoIds[0], 'tile-img') : h('div', { class: 'tile-img placeholder', style: { background: g.color } }),
       statusBadge(c.status)),
@@ -1005,6 +1147,12 @@ function climbTile(c, onClick = () => climbSheet(c)) {
       h('strong', { class: 'tile-name' }, c.name || wall || g.name),
       h('span', { class: 'tile-sub' }, climbSwatch(c), [g.name, c.name ? wall : null].filter(Boolean).join(' · ')),
       h('span', { class: 'tile-date' }, [fmtDate(c.date), tries].filter(Boolean).join(' · '))));
+  if (!quick) return tile;
+  const sent = timesTopped > 0;
+  return h('div', { class: 'tile-wrap' }, tile, h('button', {
+    class: `tile-quick${sent ? '' : ' go'}`, 'aria-label': sent ? 'Climbed it again' : 'Log a go',
+    onclick: e => { e.stopPropagation(); logAscent(c, sent ? 'repeat' : 'go'); },
+  }, sent ? '+1' : '+ go'));
 }
 
 // Wall picker in the climb form; walls are set up per gym in the Map tab
@@ -1024,9 +1172,10 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
   const lastGrade = [...state.climbs].filter(inActiveGym).sort((a, b) => b.date - a.date)[0]?.grade;
   const c = existing ? structuredClone(existing) : {
     id: uid(), date: Date.now(), grade: (gradeIndex(lastGrade) >= 0 ? lastGrade : null) ?? activeGrades()[0]?.id, name: '', status: 'project',
-    attempts: null, notes: '', photoIds: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null, gymId: activeGym().id,
+    attempts: null, notes: '', photoIds: [], ascents: [], sessionId: sessionId ?? activeSession()?.id ?? null, sentAt: null, gymId: activeGym().id,
   };
   c.gymId ??= climbGymId(c);
+  c.ascents ??= ascentsFromStatus(c);
   const newPhotos = new Map();
   const removedPhotos = [];
   const body = h('div');
@@ -1048,12 +1197,47 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
     },
   });
 
+  // Status in the form edits the first top-out: Project removes top-outs, Sent/Flash adds or retypes the first one
   const setStatus = st => {
-    c.status = st;
+    if (st === 'project') {
+      if (topsOf(c).length > 1 && !confirm('Mark as a project? This removes the times you’ve climbed it.')) return;
+      c.ascents = ascentsOf(c).filter(a => !isTop(a));
+    } else {
+      const type = st === 'flash' ? 'flash' : 'send';
+      const first = firstTop(c);
+      if (first) first.type = type;
+      else c.ascents = [...ascentsOf(c), { id: uid(), at: c.date, type, sessionId: c.sessionId ?? null }];
+    }
     if (st === 'flash') c.attempts = 1;
-    c.sentAt = st === 'project' ? null : c.sentAt ?? Date.now();
+    syncClimb(c);
     draw();
   };
+
+  function historyField() {
+    const list = [...ascentsOf(c)].sort((a, b) => b.at - a.at);
+    if (!existing || !list.length) return '';
+    return h('div', { class: 'field' }, h('span', {}, `History · climbed ${topsOf(c).length} time${topsOf(c).length === 1 ? '' : 's'}`),
+      h('div', { class: 'ascent-list' }, list.map(a => h('div', { class: `ascent-row ${a.type}` },
+        h('span', { class: 'grow' }, h('strong', {}, ASCENT_LABEL[a.type]), ` · ${fmtDate(a.at)}`,
+          a.sessionId ? h('span', { class: 'muted' }, ` · ${state.sessions.find(x => x.id === a.sessionId)?.name ?? 'session'}`) : ''),
+        h('button', {
+          class: 'icon-btn sm', 'aria-label': 'Remove',
+          onclick: () => { c.ascents = ascentsOf(c).filter(x => x.id !== a.id); if (a.type === 'go' && c.attempts) c.attempts = Math.max(1, c.attempts - 1) || null; syncClimb(c); draw(); },
+        }, icon('x'))))));
+  }
+
+  // Climbed one you've logged before? (only when adding a brand-new climb)
+  function recentPicker() {
+    if (existing || onSaved) return '';
+    const lastActive = x => Math.max(x.date, ...ascentsOf(x).map(a => a.at));
+    const recent = state.climbs.filter(x => climbGymId(x) === c.gymId).sort((a, b) => lastActive(b) - lastActive(a)).slice(0, 12);
+    if (!recent.length) return '';
+    return h('div', { class: 'field recent-picker' }, h('span', {}, 'Climbed one you’ve logged before?'),
+      h('div', { class: 'chip-row' }, recent.map(x => h('button', {
+        class: 'chip recent-chip', onclick: () => { closeSheet(); quickLog(x); },
+      }, climbSwatch(x), h('span', {}, x.name || wallOf(x)?.name || climbGrade(x).name), topsOf(x).length ? icon('check') : icon('projecting')))),
+      h('p', { class: 'muted small' }, 'Tap one to log it again. Or add a new climb below.'));
+  }
 
   function photoThumb(id) {
     const fresh = newPhotos.get(id);
@@ -1069,8 +1253,9 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
     }, icon('x')));
   }
 
-  function draw() {
+  let draw = function () {
     body.replaceChildren(
+      recentPicker(),
       h('div', { class: 'photos' },
         c.photoIds.map(photoThumb),
         h('label', { class: 'photo-add' }, icon('camera'), 'Photo or video', fileInput)),
@@ -1090,7 +1275,7 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
           h('button', { class: `grade-opt${c.grade === g.id ? ' on' : ''}`, onclick: () => { c.grade = g.id; draw(); } },
             swatch(g.id, 'lg', c.gymId), g.name)))),
       wallField(c),
-      mapPinField(c, draw),
+      mapPinField(c, () => draw()),
       field('Name (optional)', h('input', {
         class: 'input', value: c.name, placeholder: 'e.g. The pinchy one',
         oninput: e => { c.name = e.target.value; },
@@ -1111,9 +1296,20 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
       field('Notes / beta', h('textarea', {
         class: 'input', rows: 3, value: c.notes, placeholder: 'Beta, crux move, what to try next time…',
         oninput: e => { c.notes = e.target.value; },
-      })));
-  }
+      })),
+      historyField());
+  };
   draw();
+
+  // Quick actions on a saved climb act straight away
+  const quickActions = existing ? h('div', { class: 'quick-actions' },
+    topsOf(existing).length
+      ? h('button', { class: 'btn primary', onclick: () => { closeSheet(); logAscent(existing, 'repeat'); } }, '+1 Climbed it again')
+      : [h('button', { class: 'btn', onclick: () => { closeSheet(); logAscent(existing, 'go'); } }, '+ Another go'),
+        h('button', { class: 'btn primary', onclick: () => { closeSheet(); logAscent(existing, 'send'); } }, icon('check'), 'Sent it!')]) : null;
+  if (quickActions) body.prepend(quickActions);
+  const redraw = draw;
+  draw = () => { redraw(); if (quickActions) body.prepend(quickActions); };
 
   openSheet(existing ? 'Edit climb' : 'Add climb', body, [
     existing && h('button', {
@@ -1136,6 +1332,10 @@ function climbSheet(existing, sessionId = null, onSaved = null) {
         for (const id of removedPhotos) { await db.del('photos', id); photoUrls.delete(id); }
         const g = grade(c.grade, c.gymId);
         Object.assign(c, { gradeName: g.name, gradeColor: g.color });
+        // A new climb logged today counts as climbed now; on an earlier date, at that date
+        const first = firstTop(c);
+        if (!existing && first) first.at = toDateInput(c.date) === toDateInput(Date.now()) ? Date.now() : c.date;
+        syncClimb(c);
         await save('climbs', c);
         onSaved?.(c);
         const running = activeSession();
@@ -1425,7 +1625,6 @@ function weekStart(ts) {
 function progressView() {
   const sends = state.climbs.filter(c => c.status !== 'project');
   const done = state.sessions.filter(s => s.endedAt);
-  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
   // Grades only compare within a gym, so the grade stats follow the selected gym; totals cover every gym
   const gymSends = sends.filter(inActiveGym);
   const hardest = gymSends.reduce((best, c) => (gradeIndex(c.grade) > gradeIndex(best?.grade) ? c : best), null);
@@ -1436,17 +1635,34 @@ function progressView() {
   const multiGym = state.settings.gyms.length > 1;
   const maxSent = Math.max(1, ...perGrade.map(x => x.sent));
 
+  const allTops = state.climbs.flatMap(c => topsOf(c).map(a => ({ c, a })));
+  const gymTops = allTops.filter(t => inActiveGym(t.c));
   const thisWeek = weekStart(Date.now());
   const weeks = Array.from({ length: 8 }, (_, i) => {
     const start = thisWeek - (7 - i) * 7 * 86400000;
     const end = start + 7 * 86400000;
+    const inWeek = allTops.filter(t => t.a.at >= start && t.a.at < end);
+    // Stack each week's climbs by grade colour, easiest at the bottom
+    const byColour = new Map();
+    for (const { c } of inWeek) {
+      const g = climbGrade(c);
+      byColour.set(g.color, { color: g.color, name: g.name, rank: gradeRank(c), n: (byColour.get(g.color)?.n ?? 0) + 1 });
+    }
+    const hardest = gymTops.filter(t => t.a.at >= start && t.a.at < end).reduce((b, t) => (!b || gradeRank(t.c) > gradeRank(b.c) ? t : b), null);
+    const before = gymTops.filter(t => t.a.at < start).reduce((m, t) => Math.max(m, gradeRank(t.c)), -1);
     return {
-      start,
-      sessions: done.filter(s => s.startedAt >= start && s.startedAt < end).length,
-      sends: sends.filter(c => (c.sentAt ?? c.date) >= start && (c.sentAt ?? c.date) < end).length,
+      start, total: inWeek.length, stack: [...byColour.values()].sort((a, b) => a.rank - b.rank),
+      hardest, newBest: !!hardest && gradeRank(hardest.c) > before,
     };
   });
-  const maxWeek = Math.max(1, ...weeks.map(w => w.sends));
+  const maxWeek = Math.max(1, ...weeks.map(w => w.total));
+  const weekLabel = (w, i) => (i === 7 ? 'Now' : new Date(w.start).toLocaleDateString(undefined, { day: 'numeric', month: 'numeric' }));
+  // First top-out at each grade at this gym, newest first
+  const milestones = activeGrades().map(g => {
+    const first = gymTops.filter(t => t.c.grade === g.id).reduce((f, t) => (!f || t.a.at < f.a.at ? t : f), null);
+    return first && { g, ...first };
+  }).filter(Boolean).sort((a, b) => b.a.at - a.a.at).slice(0, 6);
+  const weekStartNow = thisWeek;
 
   const tile = (label, value) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value));
   const last = done.reduce((a, b) => (!a || b.startedAt > a.startedAt ? b : a), null);
@@ -1461,8 +1677,8 @@ function progressView() {
       h('span', { class: 'chev' }, '›')),
     h('h3', { class: 'section-title' }, 'Stats'),
     h('div', { class: 'tiles' },
-      tile('Sessions this month', done.filter(s => s.startedAt >= monthStart.getTime()).length),
-      tile('Total sends', sends.length),
+      tile('Climbs this week', allTops.filter(t => t.a.at >= weekStartNow).length),
+      tile('Problems sent', sends.length),
       tile(multiGym ? `Hardest at ${activeGym().name}` : 'Hardest send', hardest ? [climbSwatch(hardest, 'lg'), climbGrade(hardest).name] : '—'),
       tile('Open projects', state.climbs.filter(c => c.status === 'project').length)),
     h('h3', { class: 'section-title' }, multiGym ? `Sends by grade · ${activeGym().name}` : 'Sends by grade'),
@@ -1473,14 +1689,28 @@ function progressView() {
         h('div', { class: 'track' }, sent ? h('div', { class: 'bar', style: { width: `${(sent / maxSent) * 100}%`, background: g.color } }) : null),
         h('span', { class: 'count' }, h('strong', {}, sent), flash ? h('span', { class: 'flash-count' }, ` ${flash}`, icon('flash')) : '')))),
     h('p', { class: 'muted small flash-note' }, icon('flash'), 'shows how many were flashed'),
-    h('h3', { class: 'section-title' }, 'Sends per week'),
+    h('h3', { class: 'section-title' }, 'Climbs per week'),
     h('div', { class: 'card' },
       h('div', { class: 'weeks' }, weeks.map(w =>
-        h('div', { class: 'week', title: `Week of ${fmtDate(w.start)}: ${w.sends} sends, ${w.sessions} sessions` },
-          w.sends ? h('span', { class: 'v' }, w.sends) : null,
-          h('div', { class: 'bar', style: { height: `${(w.sends / maxWeek) * 100}%` } })))),
-      h('div', { class: 'week-labels' }, weeks.map((w, i) =>
-        h('span', {}, i === 7 ? 'Now' : new Date(w.start).toLocaleDateString(undefined, { day: 'numeric', month: 'numeric' }))))));
+        h('div', { class: 'week', title: `Week of ${fmtDate(w.start)}: ${w.total} climbs${w.stack.length ? ` (${w.stack.map(x => `${x.name} ${x.n}`).join(', ')})` : ''}` },
+          w.total ? h('span', { class: 'v' }, w.total) : null,
+          h('div', { class: 'stack', style: { height: `${(w.total / maxWeek) * 100}%` } },
+            w.stack.map(x => h('div', { style: { flexGrow: x.n, background: x.color } })))))),
+      h('div', { class: 'week-labels' }, weeks.map((w, i) => h('span', {}, weekLabel(w, i)))),
+      h('p', { class: 'muted small', style: { marginTop: '8px' } }, 'Every top-out counts, repeats included. Colours are grades.')),
+    h('h3', { class: 'section-title' }, multiGym ? `Hardest send by week · ${activeGym().name}` : 'Hardest send by week'),
+    h('div', { class: 'card' },
+      h('div', { class: 'hardest-weeks' }, weeks.map((w, i) => h('div', { class: `hw${w.newBest ? ' best' : ''}`, title: w.hardest ? `${climbGrade(w.hardest.c).name}${w.newBest ? ' · new best' : ''}` : 'No sends' },
+        w.hardest ? h('span', { class: 'swatch', style: { background: climbGrade(w.hardest.c).color } }) : h('span', { class: 'hw-none' }, '–'),
+        w.newBest ? icon('projecting') : null))),
+      h('div', { class: 'week-labels' }, weeks.map((w, i) => h('span', {}, weekLabel(w, i)))),
+      h('p', { class: 'muted small flash-note' }, icon('projecting'), 'marks a week you sent a new hardest grade')),
+    milestones.length ? [
+      h('h3', { class: 'section-title' }, multiGym ? `Milestones · ${activeGym().name}` : 'Milestones'),
+      h('div', { class: 'card milestones' }, milestones.map(m => h('div', { class: 'milestone' },
+        h('span', { class: 'swatch', style: { background: m.g.color } }),
+        h('span', { class: 'grow' }, h('strong', {}, `First ${m.g.name}`), h('span', { class: 'muted' }, ` · ${fmtDate(m.a.at)}`)),
+        h('span', { class: 'muted small' }, m.a.type === 'flash' ? 'flashed' : m.c.attempts > 1 && firstTop(m.c)?.id === m.a.id ? `${m.c.attempts} goes` : ''))))] : null);
 }
 
 function gymSheet(existing) {
@@ -1545,6 +1775,7 @@ function gymSheet(existing) {
         if (!gym.name.trim()) { toast('Give the gym a name'); return; }
         gym.grades = grades.filter(g => g.name.trim());
         if (gym.scale === 'colours' && !gym.grades.length) { toast('Add at least one colour'); return; }
+        gym.updatedAt = Date.now();
         const i = state.settings.gyms.findIndex(g => g.id === gym.id);
         if (i >= 0) state.settings.gyms[i] = gym; else state.settings.gyms.push(gym);
         if (!existing) state.settings.activeGymId = gym.id;
@@ -1612,7 +1843,7 @@ function backupButton(file, label) {
   if (navigator.canShare?.({ files: [file] })) {
     return h('button', {
       class: 'btn primary',
-      onclick: () => navigator.share({ files: [file], title: 'BetaLab backup' })
+      onclick: () => navigator.share({ files: [file] })
         .then(() => { closeSheet(); markBackedUp(); })
         .catch(() => {}),
     }, label);
@@ -1678,6 +1909,7 @@ async function importData(file) {
       h('strong', {}, 'Merge with this phone'),
       h('p', { class: 'muted small' }, (adds.length ? `Adds ${adds.join(', ')}. ` : 'Nothing new to add. ')
         + (plan.updates ? `Updates ${plan.updates} with a newer version from the backup. ` : '')
+        + (plan.gymDetails ? `Adds walls or a map to ${plan.gymDetails} gym${plan.gymDetails === 1 ? '' : 's'}. ` : '')
         + 'Everything else on this phone stays as it is. Things you deleted since this backup will come back.')),
     h('div', { class: 'info-point' },
       h('strong', {}, 'Replace everything'),
@@ -1710,7 +1942,20 @@ function planMerge(data) {
   }
   const myGyms = new Set(state.settings.gyms.map(g => g.id));
   const newGyms = (data.settings?.gyms ?? []).filter(g => !myGyms.has(g.id)).length;
-  return { add, take, updates, newGyms };
+  const gymDetails = (data.settings?.gyms ?? []).filter(g => {
+    const mine = state.settings.gyms.find(m => m.id === g.id);
+    return mine && ((g.map && !mine.map) || (g.walls ?? []).some(w => !(mine.walls ?? []).some(x => x.id === w.id)));
+  }).length;
+  return { add, take, updates, newGyms, gymDetails };
+}
+
+// Each gym is merged on its own: the more recently edited copy wins (the backup's on a tie, since presets are never
+// edited), and a map and walls from either side are kept
+function mergeGym(mine, theirs) {
+  if (!mine || !theirs) return mine ?? theirs;
+  const [newer, older] = (mine.updatedAt ?? 0) > (theirs.updatedAt ?? 0) ? [mine, theirs] : [theirs, mine];
+  const walls = [...(newer.walls ?? []), ...(older.walls ?? []).filter(w => !(newer.walls ?? []).some(n => n.id === w.id))];
+  return { ...older, ...newer, map: newer.map ?? older.map, walls };
 }
 
 async function mergeBackup(data, plan) {
@@ -1731,13 +1976,14 @@ async function mergeBackup(data, plan) {
   delete theirs.needsSave;
   const newer = (theirs.updatedAt ?? 0) > (state.settings.updatedAt ?? 0) ? theirs : state.settings;
   const older = newer === theirs ? state.settings : theirs;
-  const gyms = [...newer.gyms, ...older.gyms.filter(g => !newer.gyms.some(n => n.id === g.id))];
+  const gyms = [...newer.gyms.map(g => mergeGym(state.settings.gyms.find(m => m.id === g.id), theirs.gyms.find(t => t.id === g.id))),
+    ...older.gyms.filter(g => !newer.gyms.some(n => n.id === g.id))];
   const merged = { ...older, ...newer, gyms, id: 'settings', lastBackupAt: Math.max(theirs.lastBackupAt ?? 0, state.settings.lastBackupAt ?? 0) || undefined };
   await db.put('meta', merged);
   photoUrls.clear();
   await loadAll();
   render();
-  const added = Object.values(plan.add).reduce((a, b) => a + b, 0) + plan.newGyms;
+  const added = Object.values(plan.add).reduce((a, b) => a + b, 0) + plan.newGyms + plan.gymDetails;
   toast(added || plan.updates ? `Merged: ${added} added, ${plan.updates} updated` : 'Already up to date');
 }
 
@@ -1799,16 +2045,17 @@ async function loadAll() {
   state.plans = plans.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
   state.sessions = sessions;
   state.climbs = climbs;
+  for (const c of climbs.filter(x => !x.ascents)) { c.ascents = ascentsFromStatus(c); await db.put('climbs', c); }
   state.settings = settings ?? { id: 'settings' };
   migrateGyms(state.settings);
-  if (state.settings.needsSave) { delete state.settings.needsSave; await saveSettings(); }
+  if (state.settings.needsSave) { delete state.settings.needsSave; await db.put('meta', state.settings); }
   applyAccent();
 }
 
 async function init() {
   await loadAll();
   if (!(await db.get('meta', 'settings'))) {
-    await saveSettings();
+    await db.put('meta', state.settings);
   } else if (!(await db.get('meta', 'trackClimbs'))) {
     // Plans seeded before per-climb tracking existed: switch it on for the climbing exercises
     for (const item of [...state.plans, ...state.sessions.filter(s => !s.endedAt)]) {

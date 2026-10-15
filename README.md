@@ -52,7 +52,10 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **Track individual climbs:** add the actual problems to an exercise (e.g. the 4 in a circuit). Each one gets its own dot per round, a round completes when every climb in it is ticked, and **+ Round** adds another round.
 - **How-to tips** shown on each exercise, cut to two lines; tap to read the whole tip.
 - **Notes** on each exercise and on the whole session.
-- **Add climb** straight from the session.
+- **Add climb** straight from the session, or tap a climb you've logged before to climb it again.
+- **Session tally:** every climb in the session with a count (Green arete ×4), **+1** to log another lap, and **+ go** / **Sent** for projects.
+- **Session summary:** e.g. "31 climbs on 6 problems · Green ×30 · Orange ×1 · New best: first Orange · 8 goes".
+- **Exercise rounds count as climbs:** ticking a climb's round in an exercise logs it; unticking takes it back.
 - **Minimise:** swipe down to shrink the session to a bar above the tabs and keep using the app. Tap or swipe up to bring it back.
 - **"Still climbing?"** If a session has been left running for 2 hours without activity, BetaLab asks whether you're still going and can finish it at the time of your last set.
 - **Discard session** if you started one by mistake.
@@ -66,6 +69,7 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **▶ Session:** start a climbing session without a plan; climbs you add while it runs are saved to it.
 - **Grouped by wall:** once your gym's walls are set up (in the Map tab), climbs are listed under each wall.
 - **Status at a glance:** each climb shows a label on its photo: **Flash** (lightning, accent colour), **Sent** (tick, green) or **Project** (flag, outlined).
+- **Climb it again:** every climb keeps a history of ascents (flash, send, repeats and goes on projects). **+1** on a tile logs another top-out; **+ go** logs a try on a project, and the climb's details show the full history.
 - **Filter** by All / Projects / Sent and by **one or more grades**.
 
 ### Map
@@ -79,9 +83,11 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 ### Progress
 - **Sessions:** full history of finished sessions; tap one for its sets, notes and climbs.
 - **Edit session time:** fix a session's date, start time and length (handy if you forgot to tap Finish, or are logging one afterwards). Edited sessions are marked "edited".
-- **Stats:** sessions this month, total sends, hardest send and open projects.
+- **Stats:** climbs this week (every top-out, repeats included), problems sent (each problem once), hardest send and open projects.
 - **Sends by grade:** a grade pyramid for the selected gym, with flashes marked by a lightning icon.
-- **Sends per week** for the last 8 weeks.
+- **Climbs per week** for the last 8 weeks, stacked by grade colour, for capacity.
+- **Hardest send by week**, flagging weeks you sent a new hardest grade, for progression.
+- **Milestones:** your first send at each grade, with how many goes it took.
 
 ### Settings
 - **Accent colour:** 8 presets or any custom colour.
