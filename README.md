@@ -69,7 +69,7 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **▶ Session:** start a climbing session without a plan; climbs you add while it runs are saved to it.
 - **Grouped by wall:** once your gym's walls are set up (in the Map tab), climbs are listed under each wall.
 - **Status at a glance:** each climb shows a label on its photo: **Flash** (lightning, accent colour), **Sent** (tick, green) or **Project** (flag, outlined).
-- **Climb it again:** every climb keeps a history of ascents (flash, send, repeats and goes on projects). **+1** on a tile logs another top-out; **+ go** logs a try on a project, and the climb's details show the full history.
+- **Climb it again:** every climb keeps a history of ascents (flash, send, repeats and goes on projects). Open a climb and tap **+1 Climbed it again** (or **+ Another go** / **Sent it!** for a project). Every log has an **Undo**, and the climb's details show the full history, where you can remove any entry.
 - **Filter** by All / Projects / Sent and by **one or more grades**.
 
 ### Map
@@ -84,14 +84,15 @@ The app has five tabs: **Progress**, **Climbs**, **Train**, **Map** and **Settin
 - **Sessions:** full history of finished sessions; tap one for its sets, notes and climbs.
 - **Edit session time:** fix a session's date, start time and length (handy if you forgot to tap Finish, or are logging one afterwards). Edited sessions are marked "edited".
 - **Stats:** climbs this week (every top-out, repeats included), problems sent (each problem once), hardest send and open projects.
-- **Sends by grade:** a grade pyramid for the selected gym, with flashes marked by a lightning icon.
+- **All gyms or one gym:** grade stats cover all your gyms by default. Grades with the same name count as one (a Blue at any UC gym is a Blue), and grades only some gyms have are slotted in by where they sit in that gym's scale. Pick a single gym to see just that one.
+- **Sends by grade:** a grade pyramid, with flashes marked by a lightning icon.
 - **Climbs per week** for the last 8 weeks, stacked by grade colour, for capacity.
 - **Hardest send by week**, flagging weeks you sent a new hardest grade, for progression.
 - **Milestones:** your first send at each grade, with how many goes it took.
 
 ### Settings
 - **Accent colour:** 8 presets or any custom colour.
-- **Gyms:** keep a separate grading for each gym you climb at. Urban Climb and 9 Degrees colours are built in. Add your own gym with its colours (rename, recolour and reorder them) or the V-scale (VB–V10+).
+- **Gyms:** keep a separate grading for each gym you climb at. UC West End and 9D Morningside colours are built in. Add your own gym with its colours (rename, recolour and reorder them) or the V-scale (VB–V10+).
 - **Backups:** **Back up data** saves everything, photos included, to one file, and Settings shows when you last backed up. **Restore from backup** merges a file into your phone or replaces everything.
 - **Backup reminders:** after a session, a nudge to back up if it's been longer than 3 days, a week, 2 weeks or a month (or turn it off).
 - **Version** (tap to check for updates), **About**, and **How your data is stored**.

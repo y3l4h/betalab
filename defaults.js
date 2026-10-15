@@ -11,9 +11,9 @@ export const DEFAULT_GRADES = [
 
 // Built-in gyms; people can rename, recolour, delete or add their own
 export const GYM_PRESETS = [
-  { id: 'urban-climb', name: 'Urban Climb', scale: 'colours', grades: DEFAULT_GRADES },
+  { id: 'urban-climb', name: 'UC West End', scale: 'colours', grades: DEFAULT_GRADES },
   {
-    id: '9-degrees', name: '9 Degrees', scale: 'colours',
+    id: '9-degrees', name: '9D Morningside', scale: 'colours',
     grades: [
       ['yellow', 'Yellow', '#facc15'], ['blue', 'Blue', '#3b82f6'], ['teal', 'Teal', '#14b8a6'],
       ['purple', 'Purple', '#a855f7'], ['green', 'Green', '#22c55e'], ['pink', 'Pink', '#ec4899'],
